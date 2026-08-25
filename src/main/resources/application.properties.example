@@ -1,0 +1,23 @@
+spring.application.name=ecommerce-backend
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/ecommerce_db
+spring.datasource.username=postgres
+spring.datasource.password=CHANGE_ME
+
+spring.jpa.hibernate.ddl-auto=validate
+
+jwt.secret=CHANGE_ME_BASE64_SECRET
+jwt.access-token-expiration-ms=900000
+jwt.refresh-token-expiration-ms=604800000
+
+# VNPay sandbox — dang ky merchant test tai https://sandbox.vnpayment.vn/devreg de lay tmn-code/hash-secret that
+vnpay.tmn-code=CHANGE_ME
+vnpay.hash-secret=CHANGE_ME
+vnpay.pay-url=https://sandbox.vnpayment.vn/paymentv2/vpcpay.html
+vnpay.refund-api-url=https://sandbox.vnpayment.vn/merchant_webapi/api/transaction
+vnpay.return-url=http://localhost:8080/api/payments/vnpay-return
+
+# Actuator - /health public (health check cho LB/k8s probe), cac endpoint con lai (metrics, prometheus, info)
+# yeu cau ROLE_ADMIN, xem SecurityConfig.
+management.endpoints.web.exposure.include=health,info,metrics,prometheus
+management.endpoint.health.show-details=never

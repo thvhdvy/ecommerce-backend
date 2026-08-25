@@ -1,0 +1,21 @@
+package com.thanhnguyen.ecommercebackend.shipping.service;
+
+import com.thanhnguyen.ecommercebackend.shipping.dto.DeliveryResponse;
+import com.thanhnguyen.ecommercebackend.shipping.dto.DeliveryStatusUpdateRequest;
+import com.thanhnguyen.ecommercebackend.user.entity.User;
+
+import java.util.List;
+
+public interface ShippingService {
+    /**
+     * Admin gán (hoặc gán lại) shipper cho 1 order đã PACKED/đang SHIPPED.
+     * @param actor admin thực hiện hành động — ghi vào delivery_status_history/order_status_history.changed_by để audit.
+     */
+    DeliveryResponse assignShipper(Long orderId, Long shipperId, User actor);
+
+    /** Shipper xem các delivery được gán cho mình. */
+    List<DeliveryResponse> listMyDeliveries(User currentUser);
+
+    /** Shipper cập nhật trạng thái giao hàng (IN_TRANSIT/DELIVERED/FAILED). */
+    DeliveryResponse updateDeliveryStatus(User currentUser, Long deliveryId, DeliveryStatusUpdateRequest request);
+}
