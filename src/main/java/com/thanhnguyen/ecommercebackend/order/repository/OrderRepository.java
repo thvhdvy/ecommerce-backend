@@ -18,4 +18,6 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     List<Order> findAllByStatusAndCreatedAtBefore(OrderStatus status, LocalDateTime cutoff);
 
     List<Order> findAllByStatusAndUpdatedAtBefore(OrderStatus status, LocalDateTime cutoff);
+
+    List<Order> findAllByOrderByCreatedAtDesc();
 }

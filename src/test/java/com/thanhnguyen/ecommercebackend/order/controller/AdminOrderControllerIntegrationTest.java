@@ -242,6 +242,29 @@ class AdminOrderControllerIntegrationTest {
     }
 
     @Test
+    void listAll_shouldReturn403_forNonAdmin() throws Exception {
+        Long productId = createProductWithStock(becomeSeller("listperm1"), "listperm1", new BigDecimal("10.00"), 5);
+        String customerToken = registerAndLogin("admin-order-customer-listperm1@example.com", UserRole.CUSTOMER);
+        checkoutOrder(customerToken, productId, 1);
+
+        mockMvc.perform(get("/api/admin/orders")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listAll_shouldReturnOrders_forAdmin() throws Exception {
+        Long productId = createProductWithStock(becomeSeller("list1"), "list1", new BigDecimal("10.00"), 5);
+        String customerToken = registerAndLogin("admin-order-customer-list1@example.com", UserRole.CUSTOMER);
+        checkoutOrder(customerToken, productId, 1);
+
+        String adminToken = registerAndLogin("admin-order-actor-list1@example.com", UserRole.ADMIN);
+        mockMvc.perform(get("/api/admin/orders")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void forceCancel_shouldReturn403_forNonAdmin() throws Exception {
         Long productId = createProductWithStock(becomeSeller("perm1"), "perm1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("admin-order-customer-perm1@example.com", UserRole.CUSTOMER);

@@ -24,7 +24,9 @@ import com.thanhnguyen.ecommercebackend.order.repository.OrderStatusHistoryRepos
 import com.thanhnguyen.ecommercebackend.payment.service.PaymentService;
 import com.thanhnguyen.ecommercebackend.product.exception.NotASellerException;
 import com.thanhnguyen.ecommercebackend.user.entity.Seller;
+import com.thanhnguyen.ecommercebackend.user.entity.SellerStatus;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
+import com.thanhnguyen.ecommercebackend.user.exception.SellerLockedException;
 import com.thanhnguyen.ecommercebackend.user.repository.SellerRepository;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -423,9 +425,21 @@ public class OrderServiceImpl implements OrderService {
                 .orElse(null);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<OrderResponse> listAllOrders() {
+        return orderRepository.findAllByOrderByCreatedAtDesc().stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
     private Seller resolveSeller(User currentUser) {
-        return sellerRepository.findByUserId(currentUser.getId())
+        Seller seller = sellerRepository.findByUserId(currentUser.getId())
                 .orElseThrow(NotASellerException::new);
+        if (seller.getStatus() == SellerStatus.LOCKED) {
+            throw new SellerLockedException();
+        }
+        return seller;
     }
 
     private Order resolveOwnedOrder(User currentUser, Long orderId) {

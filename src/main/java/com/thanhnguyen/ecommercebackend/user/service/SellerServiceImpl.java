@@ -8,10 +8,13 @@ import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.entity.UserRole;
 import com.thanhnguyen.ecommercebackend.user.exception.NotEligibleForSellerException;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerAlreadyExistsException;
+import com.thanhnguyen.ecommercebackend.user.exception.SellerNotFoundException;
 import com.thanhnguyen.ecommercebackend.user.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -38,13 +41,35 @@ public class SellerServiceImpl implements SellerService {
 
         Seller saved = sellerRepository.save(seller);
 
+        return toResponse(saved);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<SellerResponse> listAll() {
+        return sellerRepository.findAll().stream().map(this::toResponse).toList();
+    }
+
+    @Override
+    @Transactional
+    public SellerResponse setLocked(Long sellerId, boolean locked) {
+        Seller seller = sellerRepository.findById(sellerId)
+                .orElseThrow(() -> new SellerNotFoundException(sellerId));
+
+        seller.setStatus(locked ? SellerStatus.LOCKED : SellerStatus.ACTIVE);
+        Seller saved = sellerRepository.save(seller);
+
+        return toResponse(saved);
+    }
+
+    private SellerResponse toResponse(Seller seller) {
         return new SellerResponse(
-                saved.getId(),
-                currentUser.getId(),
-                saved.getStoreName(),
-                saved.getStoreDescription(),
-                saved.getStatus(),
-                saved.getCreatedAt()
+                seller.getId(),
+                seller.getUser().getId(),
+                seller.getStoreName(),
+                seller.getStoreDescription(),
+                seller.getStatus(),
+                seller.getCreatedAt()
         );
     }
 }

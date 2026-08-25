@@ -33,6 +33,8 @@ import com.thanhnguyen.ecommercebackend.user.exception.InvalidRefreshTokenExcept
 import com.thanhnguyen.ecommercebackend.user.exception.InvalidResetTokenException;
 import com.thanhnguyen.ecommercebackend.user.exception.NotEligibleForSellerException;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerAlreadyExistsException;
+import com.thanhnguyen.ecommercebackend.user.exception.SellerLockedException;
+import com.thanhnguyen.ecommercebackend.user.exception.SellerNotFoundException;
 import com.thanhnguyen.ecommercebackend.user.exception.UserNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -248,6 +250,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleNotAShipper(NotAShipperException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("NOT_A_SHIPPER", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SellerLockedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleSellerLocked(SellerLockedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error("SELLER_LOCKED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SellerNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleSellerNotFound(SellerNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("SELLER_NOT_FOUND", ex.getMessage()));
     }
 
     @ExceptionHandler(ReviewNotFoundException.class)

@@ -75,4 +75,7 @@ public interface OrderService {
      * Trả về id của order gần nhất thỏa điều kiện, hoặc null nếu customer chưa từng mua/nhận productId này.
      */
     Long findEligibleOrderIdForReview(User customer, Long productId);
+
+    /** Admin: xem toàn bộ order trong hệ thống. */
+    List<OrderResponse> listAllOrders();
 }

@@ -8,17 +8,21 @@ import com.thanhnguyen.ecommercebackend.user.entity.UserRole;
 import com.thanhnguyen.ecommercebackend.user.entity.UserStatus;
 import com.thanhnguyen.ecommercebackend.user.exception.EmailAlreadyExistsException;
 import com.thanhnguyen.ecommercebackend.user.exception.UserNotFoundException;
+import com.thanhnguyen.ecommercebackend.user.repository.RefreshTokenRepository;
 import com.thanhnguyen.ecommercebackend.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -63,6 +67,28 @@ public class UserServiceImpl implements UserService {
         }
 
         User saved = userRepository.save(user);
+        return toResponse(saved);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UserResponse> listAll() {
+        return userRepository.findAll().stream().map(this::toResponse).toList();
+    }
+
+    @Override
+    @Transactional
+    public UserResponse setLocked(Long userId, boolean locked) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException(userId));
+
+        user.setStatus(locked ? UserStatus.LOCKED : UserStatus.ACTIVE);
+        User saved = userRepository.save(user);
+
+        if (locked) {
+            refreshTokenRepository.revokeAllByUserId(userId);
+        }
+
         return toResponse(saved);
     }
 

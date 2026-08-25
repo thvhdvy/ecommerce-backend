@@ -27,7 +27,9 @@ import com.thanhnguyen.ecommercebackend.product.repository.CategoryRepository;
 import com.thanhnguyen.ecommercebackend.product.repository.ProductRepository;
 import com.thanhnguyen.ecommercebackend.product.specification.ProductSpecifications;
 import com.thanhnguyen.ecommercebackend.user.entity.Seller;
+import com.thanhnguyen.ecommercebackend.user.entity.SellerStatus;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
+import com.thanhnguyen.ecommercebackend.user.exception.SellerLockedException;
 import com.thanhnguyen.ecommercebackend.user.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -164,8 +166,12 @@ public class ProductServiceImpl implements ProductService {
     }
 
     private Seller resolveSeller(User currentUser) {
-        return sellerRepository.findByUserId(currentUser.getId())
+        Seller seller = sellerRepository.findByUserId(currentUser.getId())
                 .orElseThrow(NotASellerException::new);
+        if (seller.getStatus() == SellerStatus.LOCKED) {
+            throw new SellerLockedException();
+        }
+        return seller;
     }
 
     private Category resolveCategory(Long categoryId) {
