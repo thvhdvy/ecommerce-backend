@@ -4,6 +4,7 @@ import com.thanhnguyen.ecommercebackend.TestcontainersConfiguration;
 import com.thanhnguyen.ecommercebackend.cart.dto.AddCartItemRequest;
 import com.thanhnguyen.ecommercebackend.inventory.dto.UpdateInventoryRequest;
 import com.thanhnguyen.ecommercebackend.order.dto.CheckoutRequest;
+import com.thanhnguyen.ecommercebackend.order.entity.OrderStatus;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayClient;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayRefundResult;
 import com.thanhnguyen.ecommercebackend.product.dto.CategoryRequest;
@@ -70,6 +71,9 @@ class AdminOrderControllerIntegrationTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private com.thanhnguyen.ecommercebackend.order.repository.OrderStatusHistoryRepository orderStatusHistoryRepository;
 
     @MockitoSpyBean
     private VnpayClient vnpayClient;
@@ -281,7 +285,7 @@ class AdminOrderControllerIntegrationTest {
     void forceCancel_shouldCancel_withoutRefund_whenPendingPayment() throws Exception {
         Long productId = createProductWithStock(becomeSeller("pending1"), "pending1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("admin-order-customer-pending1@example.com", UserRole.CUSTOMER);
-        Long orderId = checkoutOrder(customerToken, productId, 2);
+        Long orderId = checkoutOrder(customerToken, productId, 2); // giu 2/5 tồn kho
 
         String adminToken = registerAndLogin("admin-order-actor-pending1@example.com", UserRole.ADMIN);
         mockMvc.perform(post("/api/admin/orders/" + orderId + "/cancel")
@@ -290,6 +294,40 @@ class AdminOrderControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.status", is("CANCELLED")));
 
         verify(vnpayClient, never()).requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
+
+        // History row phai dung: from PENDING_PAYMENT, to CANCELLED, changed_by = admin, co reason.
+        Long adminUserId = userRepository.findByEmail("admin-order-actor-pending1@example.com").orElseThrow().getId();
+        var historyRows = orderStatusHistoryRepository.findAllByOrder_IdOrderByCreatedAtDesc(orderId);
+        org.assertj.core.api.Assertions.assertThat(historyRows).hasSize(2); // dong PENDING_PAYMENT ban dau + dong CANCELLED
+        var latest = historyRows.get(0);
+        org.assertj.core.api.Assertions.assertThat(latest.getFromStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT);
+        org.assertj.core.api.Assertions.assertThat(latest.getToStatus()).isEqualTo(OrderStatus.CANCELLED);
+        // getId() tren lazy proxy khong trigger load (id da co san tren proxy) — an toan ngoai transaction.
+        org.assertj.core.api.Assertions.assertThat(latest.getChangedBy().getId()).isEqualTo(adminUserId);
+        org.assertj.core.api.Assertions.assertThat(latest.getReason()).isEqualTo("Admin force-cancel");
+
+        // Reserved stock phai duoc release: mua lai du 5/5 (2 da huy + 3 con lai) phai thanh cong.
+        mockMvc.perform(post("/api/cart/items")
+                        .header("Authorization", "Bearer " + customerToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new AddCartItemRequest(productId, 5))))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/orders/checkout")
+                        .header("Authorization", "Bearer " + customerToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CheckoutRequest("Nguyen Van A", "0900000000", "123 Test Street", null))))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void forceCancel_shouldReturn404_whenOrderNotFound() throws Exception {
+        String adminToken = registerAndLogin("admin-order-actor-notfound1@example.com", UserRole.ADMIN);
+
+        mockMvc.perform(post("/api/admin/orders/999999/cancel")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code", is("ORDER_NOT_FOUND")));
     }
 
     @Test

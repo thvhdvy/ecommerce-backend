@@ -3,7 +3,7 @@ package com.thanhnguyen.ecommercebackend.user.controller;
 import com.thanhnguyen.ecommercebackend.TestcontainersConfiguration;
 import com.thanhnguyen.ecommercebackend.user.dto.LoginRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.RegisterRequest;
-import com.thanhnguyen.ecommercebackend.user.dto.UserLockRequest;
+import com.thanhnguyen.ecommercebackend.user.dto.LockRequest;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.entity.UserRole;
 import com.thanhnguyen.ecommercebackend.user.repository.UserRepository;
@@ -105,7 +105,7 @@ class AdminUserControllerIntegrationTest {
         mockMvc.perform(patch("/api/admin/users/" + admin.getId() + "/lock")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UserLockRequest(true))))
+                        .content(objectMapper.writeValueAsString(new LockRequest(true))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code", is("SELF_LOCK_NOT_ALLOWED")));
 
@@ -130,7 +130,7 @@ class AdminUserControllerIntegrationTest {
         mockMvc.perform(patch("/api/admin/users/" + target.getId() + "/lock")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UserLockRequest(true))))
+                        .content(objectMapper.writeValueAsString(new LockRequest(true))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("LOCKED")));
 
@@ -163,13 +163,13 @@ class AdminUserControllerIntegrationTest {
         mockMvc.perform(patch("/api/admin/users/" + target.getId() + "/lock")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UserLockRequest(true))))
+                        .content(objectMapper.writeValueAsString(new LockRequest(true))))
                 .andExpect(status().isOk());
 
         mockMvc.perform(patch("/api/admin/users/" + target.getId() + "/lock")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new UserLockRequest(false))))
+                        .content(objectMapper.writeValueAsString(new LockRequest(false))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("ACTIVE")));
 
@@ -178,5 +178,27 @@ class AdminUserControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(
                                 new LoginRequest("adminuser-target-unlock1@example.com", "Password123"))))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void lock_shouldBeIdempotent_whenAlreadyLocked() throws Exception {
+        registerAndLogin("adminuser-target-doublelock1@example.com", UserRole.CUSTOMER);
+        User target = userRepository.findByEmail("adminuser-target-doublelock1@example.com").orElseThrow();
+        String adminToken = registerAndLogin("adminuser-admin-doublelock1@example.com", UserRole.ADMIN);
+
+        mockMvc.perform(patch("/api/admin/users/" + target.getId() + "/lock")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LockRequest(true))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("LOCKED")));
+
+        // Lock lan 2 tren user da LOCKED phai la no-op vo hai, khong loi.
+        mockMvc.perform(patch("/api/admin/users/" + target.getId() + "/lock")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LockRequest(true))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("LOCKED")));
     }
 }

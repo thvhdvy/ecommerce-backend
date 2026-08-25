@@ -1,7 +1,7 @@
 package com.thanhnguyen.ecommercebackend.user.controller;
 
 import com.thanhnguyen.ecommercebackend.common.ApiResponse;
-import com.thanhnguyen.ecommercebackend.user.dto.SellerLockRequest;
+import com.thanhnguyen.ecommercebackend.user.dto.LockRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.SellerResponse;
 import com.thanhnguyen.ecommercebackend.user.service.SellerService;
 import jakarta.validation.Valid;
@@ -32,7 +32,7 @@ public class AdminSellerController {
 
     @PatchMapping("/{id}/lock")
     public ResponseEntity<ApiResponse<SellerResponse>> setLocked(
-            @PathVariable Long id, @Valid @RequestBody SellerLockRequest request) {
+            @PathVariable Long id, @Valid @RequestBody LockRequest request) {
         return ResponseEntity.ok(ApiResponse.success(sellerService.setLocked(id, request.getLocked())));
     }
 }

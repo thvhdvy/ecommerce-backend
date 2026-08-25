@@ -393,13 +393,77 @@ class ReviewControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("HIDDEN")));
 
+        // Anonymous / nguoi khac khong thay review da bi an.
         mockMvc.perform(get("/api/products/" + productId + "/reviews"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()", is(0)));
 
+        // Chinh tac gia van thay lai review cua minh (biet no da bi an) khi goi co token.
+        mockMvc.perform(get("/api/products/" + productId + "/reviews")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()", is(1)))
+                .andExpect(jsonPath("$.data[0].status", is("HIDDEN")));
+
         mockMvc.perform(get("/api/products/" + productId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.ratingAvg", is(0.0)));
+    }
+
+    @Test
+    void adminUnhide_shouldRestoreVisibility_andRecalculateRating() throws Exception {
+        String sellerToken = becomeSeller("unhide1");
+        Long productId = createProductWithStock(sellerToken, "unhide1", new BigDecimal("10.00"), 5);
+        String customerToken = registerAndLogin("review-customer-unhide1@example.com", UserRole.CUSTOMER);
+        buildDeliveredOrder(customerToken, sellerToken, productId, "unhide1");
+
+        MvcResult createResult = mockMvc.perform(post("/api/products/" + productId + "/reviews")
+                        .header("Authorization", "Bearer " + customerToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateReviewRequest(4, "Decent"))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        Long reviewId = objectMapper.readTree(createResult.getResponse().getContentAsString())
+                .get("data").get("id").asLong();
+
+        String adminToken = registerAndLogin("review-admin-unhide-action1@example.com", UserRole.ADMIN);
+        mockMvc.perform(patch("/api/admin/reviews/" + reviewId + "/hide")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/admin/reviews/" + reviewId + "/unhide")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("VISIBLE")));
+
+        mockMvc.perform(get("/api/products/" + productId + "/reviews"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()", is(1)));
+
+        mockMvc.perform(get("/api/products/" + productId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ratingAvg", is(4.0)));
+    }
+
+    @Test
+    void adminUnhide_shouldReturn403_forNonAdmin() throws Exception {
+        String sellerToken = becomeSeller("unhideperm1");
+        Long productId = createProductWithStock(sellerToken, "unhideperm1", new BigDecimal("10.00"), 5);
+        String customerToken = registerAndLogin("review-customer-unhideperm1@example.com", UserRole.CUSTOMER);
+        buildDeliveredOrder(customerToken, sellerToken, productId, "unhideperm1");
+
+        MvcResult createResult = mockMvc.perform(post("/api/products/" + productId + "/reviews")
+                        .header("Authorization", "Bearer " + customerToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateReviewRequest(2, "Meh"))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        Long reviewId = objectMapper.readTree(createResult.getResponse().getContentAsString())
+                .get("data").get("id").asLong();
+
+        mockMvc.perform(patch("/api/admin/reviews/" + reviewId + "/unhide")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isForbidden());
     }
 
     @Test

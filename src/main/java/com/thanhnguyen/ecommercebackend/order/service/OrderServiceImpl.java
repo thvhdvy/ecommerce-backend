@@ -129,36 +129,15 @@ public class OrderServiceImpl implements OrderService {
         return toResponse(order);
     }
 
+    // Chi customer tu huy duoc tu PENDING_PAYMENT/CONFIRMED, nen "da thanh toan" o day chi co the la CONFIRMED.
+    private static final Set<OrderStatus> CUSTOMER_PAID_STATUSES = Set.of(OrderStatus.CONFIRMED);
+
     @Override
     @Transactional
     public OrderResponse cancel(User currentUser, Long orderId) {
         Order order = resolveOwnedOrder(currentUser, orderId);
-
-        if (!CANCELLABLE_STATUSES.contains(order.getStatus())) {
-            throw new OrderCancelNotAllowedException();
-        }
-
-        OrderStatus previousStatus = order.getStatus();
-
-        // Cancel trước payment: reserved > 0, trả lại available. Cancel sau payment (CONFIRMED):
-        // reserved đã về 0 từ bước confirmPayment (commitReservedStock) — không có gì để release,
-        // và available không tự tăng lại (nhập kho lại thuộc luồng return/refund v2, xem design doc dòng 333).
-        if (previousStatus == OrderStatus.PENDING_PAYMENT) {
-            for (OrderItem item : order.getItems()) {
-                inventoryService.releaseStock(item.getProductId(), item.getQuantity());
-            }
-        }
-
-        order.setStatus(OrderStatus.CANCELLED);
-        Order saved = saveWithOptimisticLock(order);
-        orderStatusHistoryRepository.save(
-                new OrderStatusHistory(saved, previousStatus, OrderStatus.CANCELLED, currentUser, null));
-
-        if (previousStatus == OrderStatus.CONFIRMED) {
-            paymentService.refund(orderId, "Customer cancelled order after payment", "127.0.0.1");
-        }
-
-        return toResponse(saved);
+        return cancelOrder(order, currentUser, CANCELLABLE_STATUSES, CUSTOMER_PAID_STATUSES,
+                null, "Customer cancelled order after payment");
     }
 
     @Override
@@ -166,15 +145,26 @@ public class OrderServiceImpl implements OrderService {
     public OrderResponse forceCancel(User admin, Long orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException(orderId));
+        return cancelOrder(order, admin, ADMIN_CANCELLABLE_STATUSES, PAID_STATUSES,
+                "Admin force-cancel", "Admin force-cancelled order after payment");
+    }
 
-        if (!ADMIN_CANCELLABLE_STATUSES.contains(order.getStatus())) {
+    /**
+     * Logic dung chung cho cancel() (customer) va forceCancel() (admin) — chi khac nhau ve
+     * tap status cho phep, tap status "da thanh toan" (can refund), va actor/reason ghi history.
+     */
+    private OrderResponse cancelOrder(
+            Order order, User actor, Set<OrderStatus> allowedStatuses, Set<OrderStatus> paidStatuses,
+            String historyReason, String refundReason) {
+        if (!allowedStatuses.contains(order.getStatus())) {
             throw new OrderCancelNotAllowedException();
         }
 
         OrderStatus previousStatus = order.getStatus();
 
-        // Giong logic cancel(): chi PENDING_PAYMENT con reserved can release. Tu CONFIRMED/PACKED,
-        // reserved da ve 0 tu buoc confirmPayment (commitReservedStock), khong co gi de release.
+        // Cancel truoc payment: reserved > 0, tra lai available. Cancel sau payment (CONFIRMED/PACKED):
+        // reserved da ve 0 tu buoc confirmPayment (commitReservedStock) — khong co gi de release,
+        // va available khong tu tang lai (nhap kho lai thuoc luong return/refund v2, xem design doc dong 333).
         if (previousStatus == OrderStatus.PENDING_PAYMENT) {
             for (OrderItem item : order.getItems()) {
                 inventoryService.releaseStock(item.getProductId(), item.getQuantity());
@@ -184,10 +174,10 @@ public class OrderServiceImpl implements OrderService {
         order.setStatus(OrderStatus.CANCELLED);
         Order saved = saveWithOptimisticLock(order);
         orderStatusHistoryRepository.save(
-                new OrderStatusHistory(saved, previousStatus, OrderStatus.CANCELLED, admin, "Admin force-cancel"));
+                new OrderStatusHistory(saved, previousStatus, OrderStatus.CANCELLED, actor, historyReason));
 
-        if (PAID_STATUSES.contains(previousStatus)) {
-            paymentService.refund(orderId, "Admin force-cancelled order after payment", "127.0.0.1");
+        if (paidStatuses.contains(previousStatus)) {
+            paymentService.refund(order.getId(), refundReason, "127.0.0.1");
         }
 
         return toResponse(saved);

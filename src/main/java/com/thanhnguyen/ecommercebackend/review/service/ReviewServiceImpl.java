@@ -65,8 +65,8 @@ public class ReviewServiceImpl implements ReviewService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<ReviewResponse> listVisibleByProduct(Long productId) {
-        return reviewRepository.findAllByProductIdAndStatusOrderByCreatedAtDesc(productId, ReviewStatus.VISIBLE)
+    public List<ReviewResponse> listByProduct(Long productId, Long currentUserId) {
+        return reviewRepository.findAllVisibleOrOwnByProductId(productId, currentUserId)
                 .stream()
                 .map(this::toResponse)
                 .toList();
@@ -86,7 +86,27 @@ public class ReviewServiceImpl implements ReviewService {
         return toResponse(saved);
     }
 
+    @Override
+    @Transactional
+    public ReviewResponse unhide(Long reviewId) {
+        Review review = reviewRepository.findById(reviewId)
+                .orElseThrow(() -> new ReviewNotFoundException(reviewId));
+
+        review.setStatus(ReviewStatus.VISIBLE);
+        Review saved = reviewRepository.save(review);
+
+        recalculateProductRating(saved.getProduct().getId());
+
+        return toResponse(saved);
+    }
+
     private void recalculateProductRating(Long productId) {
+        // Khoa row Product TRUOC khi doc AVG (khong phai sau) — neu 2 review cung product duoc tao
+        // gan nhu dong thoi, request thua se cho o day cho toi khi request truoc commit xong; luc do
+        // AVG doc lai se thay ca 2 review (thay vi ghi de nhau, moi ben chi thay review cua rieng minh).
+        productRepository.findByIdForRatingUpdate(productId)
+                .orElseThrow(() -> new ProductNotFoundException(productId));
+
         Double avg = reviewRepository.findAvgRatingByProductIdAndStatus(productId, ReviewStatus.VISIBLE);
         BigDecimal ratingAvg = BigDecimal.valueOf(avg == null ? 0.0 : avg).setScale(2, RoundingMode.HALF_UP);
         productService.recalculateRating(productId, ratingAvg);

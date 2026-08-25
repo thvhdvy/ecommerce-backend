@@ -1,7 +1,7 @@
 package com.thanhnguyen.ecommercebackend.user.controller;
 
 import com.thanhnguyen.ecommercebackend.common.ApiResponse;
-import com.thanhnguyen.ecommercebackend.user.dto.UserLockRequest;
+import com.thanhnguyen.ecommercebackend.user.dto.LockRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.UserResponse;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.service.UserService;
@@ -35,7 +35,7 @@ public class AdminUserController {
     @PatchMapping("/{id}/lock")
     public ResponseEntity<ApiResponse<UserResponse>> setLocked(
             @AuthenticationPrincipal User currentUser,
-            @PathVariable Long id, @Valid @RequestBody UserLockRequest request) {
+            @PathVariable Long id, @Valid @RequestBody LockRequest request) {
         return ResponseEntity.ok(ApiResponse.success(
                 userService.setLocked(currentUser.getId(), id, request.getLocked())));
     }

@@ -6,7 +6,7 @@ import com.thanhnguyen.ecommercebackend.product.dto.ProductCreateRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.BecomeSellerRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.LoginRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.RegisterRequest;
-import com.thanhnguyen.ecommercebackend.user.dto.SellerLockRequest;
+import com.thanhnguyen.ecommercebackend.user.dto.LockRequest;
 import com.thanhnguyen.ecommercebackend.user.entity.Seller;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.entity.UserRole;
@@ -128,7 +128,7 @@ class AdminSellerControllerIntegrationTest {
         mockMvc.perform(patch("/api/admin/sellers/" + seller.getId() + "/lock")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new SellerLockRequest(true))))
+                        .content(objectMapper.writeValueAsString(new LockRequest(true))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("LOCKED")));
 
@@ -143,7 +143,7 @@ class AdminSellerControllerIntegrationTest {
         mockMvc.perform(patch("/api/admin/sellers/" + seller.getId() + "/lock")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new SellerLockRequest(false))))
+                        .content(objectMapper.writeValueAsString(new LockRequest(false))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("ACTIVE")));
 
@@ -153,5 +153,28 @@ class AdminSellerControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(new ProductCreateRequest(
                                 "Product-lock1", "desc", new BigDecimal("10.00"), categoryId, null, null))))
                 .andExpect(status().isCreated());
+    }
+
+    @Test
+    void lock_shouldBeIdempotent_whenAlreadyLocked() throws Exception {
+        becomeSeller("doublelock1");
+        User sellerUser = userRepository.findByEmail("adminseller-seller-doublelock1@example.com").orElseThrow();
+        Seller seller = sellerRepository.findByUserId(sellerUser.getId()).orElseThrow();
+        String adminToken = registerAndLogin("adminseller-admin-doublelock1@example.com", UserRole.ADMIN);
+
+        mockMvc.perform(patch("/api/admin/sellers/" + seller.getId() + "/lock")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LockRequest(true))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("LOCKED")));
+
+        // Lock lan 2 tren seller da LOCKED phai la no-op vo hai, khong loi.
+        mockMvc.perform(patch("/api/admin/sellers/" + seller.getId() + "/lock")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LockRequest(true))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("LOCKED")));
     }
 }

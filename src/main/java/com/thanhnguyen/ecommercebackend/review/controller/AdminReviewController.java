@@ -23,4 +23,9 @@ public class AdminReviewController {
     public ResponseEntity<ApiResponse<ReviewResponse>> hide(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.success(reviewService.hide(id)));
     }
+
+    @PatchMapping("/{id}/unhide")
+    public ResponseEntity<ApiResponse<ReviewResponse>> unhide(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success(reviewService.unhide(id)));
+    }
 }

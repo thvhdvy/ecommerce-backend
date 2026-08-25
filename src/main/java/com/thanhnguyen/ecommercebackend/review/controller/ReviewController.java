@@ -27,8 +27,10 @@ public class ReviewController {
     private final ReviewService reviewService;
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<ReviewResponse>>> listByProduct(@PathVariable Long productId) {
-        return ResponseEntity.ok(ApiResponse.success(reviewService.listVisibleByProduct(productId)));
+    public ResponseEntity<ApiResponse<List<ReviewResponse>>> listByProduct(
+            @AuthenticationPrincipal User currentUser, @PathVariable Long productId) {
+        Long currentUserId = currentUser != null ? currentUser.getId() : null;
+        return ResponseEntity.ok(ApiResponse.success(reviewService.listByProduct(productId, currentUserId)));
     }
 
     @PostMapping

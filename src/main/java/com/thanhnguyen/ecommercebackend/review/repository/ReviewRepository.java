@@ -17,4 +17,14 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
 
     @Query("SELECT COALESCE(AVG(r.rating), 0.0) FROM Review r WHERE r.product.id = :productId AND r.status = :status")
     Double findAvgRatingByProductIdAndStatus(@Param("productId") Long productId, @Param("status") ReviewStatus status);
+
+    /**
+     * VISIBLE review cua tat ca moi nguoi, cong them HIDDEN review cua chinh currentUserId (neu co) —
+     * currentUserId co the null (anonymous), khi do phan HIDDEN khong bao gio match (so sanh voi NULL).
+     */
+    @Query("SELECT r FROM Review r WHERE r.product.id = :productId "
+            + "AND (r.status = com.thanhnguyen.ecommercebackend.review.entity.ReviewStatus.VISIBLE "
+            + "OR (r.status = com.thanhnguyen.ecommercebackend.review.entity.ReviewStatus.HIDDEN AND r.user.id = :currentUserId)) "
+            + "ORDER BY r.createdAt DESC")
+    List<Review> findAllVisibleOrOwnByProductId(@Param("productId") Long productId, @Param("currentUserId") Long currentUserId);
 }
