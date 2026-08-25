@@ -7,6 +7,7 @@ import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.entity.UserRole;
 import com.thanhnguyen.ecommercebackend.user.entity.UserStatus;
 import com.thanhnguyen.ecommercebackend.user.exception.EmailAlreadyExistsException;
+import com.thanhnguyen.ecommercebackend.user.exception.SelfLockNotAllowedException;
 import com.thanhnguyen.ecommercebackend.user.exception.UserNotFoundException;
 import com.thanhnguyen.ecommercebackend.user.repository.RefreshTokenRepository;
 import com.thanhnguyen.ecommercebackend.user.repository.UserRepository;
@@ -78,7 +79,11 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional
-    public UserResponse setLocked(Long userId, boolean locked) {
+    public UserResponse setLocked(Long actorUserId, Long userId, boolean locked) {
+        if (locked && actorUserId.equals(userId)) {
+            throw new SelfLockNotAllowedException();
+        }
+
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new UserNotFoundException(userId));
 

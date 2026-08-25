@@ -19,6 +19,8 @@ public interface UserService {
     /**
      * Admin: khóa/mở khóa tài khoản. Khóa thì revoke luôn toàn bộ refresh_tokens hiện có
      * (JWT access token cũ vẫn bị chặn ở request kế tiếp qua JwtAuthenticationFilter re-check status).
+     * Không cho phép admin tự khóa chính mình (actorUserId == userId) — vì filter re-check status
+     * mỗi request, tự khóa sẽ tự chặn luôn request unlock kế tiếp, không có đường phục hồi qua API.
      */
-    UserResponse setLocked(Long userId, boolean locked);
+    UserResponse setLocked(Long actorUserId, Long userId, boolean locked);
 }

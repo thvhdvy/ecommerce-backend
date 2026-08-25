@@ -29,6 +29,7 @@ import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerLockedException;
 import com.thanhnguyen.ecommercebackend.user.repository.SellerRepository;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -149,7 +150,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         order.setStatus(OrderStatus.CANCELLED);
-        Order saved = orderRepository.save(order);
+        Order saved = saveWithOptimisticLock(order);
         orderStatusHistoryRepository.save(
                 new OrderStatusHistory(saved, previousStatus, OrderStatus.CANCELLED, currentUser, null));
 
@@ -181,7 +182,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         order.setStatus(OrderStatus.CANCELLED);
-        Order saved = orderRepository.save(order);
+        Order saved = saveWithOptimisticLock(order);
         orderStatusHistoryRepository.save(
                 new OrderStatusHistory(saved, previousStatus, OrderStatus.CANCELLED, admin, "Admin force-cancel"));
 
@@ -440,6 +441,19 @@ public class OrderServiceImpl implements OrderService {
             throw new SellerLockedException();
         }
         return seller;
+    }
+
+    /**
+     * saveAndFlush (khong phai save thuong) de bat ObjectOptimisticLockingFailureException ngay tai day,
+     * truoc khi tiep tuc goi paymentService.refund() — phong 2 request cancel/forceCancel dong thoi tren
+     * cung 1 order cung doc duoc status hop le truoc khi ben kia commit, dan toi refund 2 lan (xem Order.version).
+     */
+    private Order saveWithOptimisticLock(Order order) {
+        try {
+            return orderRepository.saveAndFlush(order);
+        } catch (ObjectOptimisticLockingFailureException ex) {
+            throw new OrderCancelNotAllowedException();
+        }
     }
 
     private Order resolveOwnedOrder(User currentUser, Long orderId) {

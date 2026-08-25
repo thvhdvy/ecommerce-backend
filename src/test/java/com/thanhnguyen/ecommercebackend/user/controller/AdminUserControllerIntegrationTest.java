@@ -98,6 +98,24 @@ class AdminUserControllerIntegrationTest {
     }
 
     @Test
+    void lock_shouldReturn409_whenAdminLocksOwnAccount() throws Exception {
+        String adminToken = registerAndLogin("adminuser-admin-selflock1@example.com", UserRole.ADMIN);
+        User admin = userRepository.findByEmail("adminuser-admin-selflock1@example.com").orElseThrow();
+
+        mockMvc.perform(patch("/api/admin/users/" + admin.getId() + "/lock")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UserLockRequest(true))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code", is("SELF_LOCK_NOT_ALLOWED")));
+
+        // Admin van con hoat dong binh thuong sau khi bi tu choi tu-khoa.
+        mockMvc.perform(get("/api/admin/users")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void lock_shouldRevokeRefreshToken_andBlockOldAccessToken_onNextRequest() throws Exception {
         String targetToken = registerAndLogin("adminuser-target-lock1@example.com", UserRole.CUSTOMER);
         String refreshToken = extractRefreshToken("adminuser-target-lock1@example.com");

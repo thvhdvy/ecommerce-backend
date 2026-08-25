@@ -32,6 +32,7 @@ import com.thanhnguyen.ecommercebackend.user.exception.InvalidCredentialsExcepti
 import com.thanhnguyen.ecommercebackend.user.exception.InvalidRefreshTokenException;
 import com.thanhnguyen.ecommercebackend.user.exception.InvalidResetTokenException;
 import com.thanhnguyen.ecommercebackend.user.exception.NotEligibleForSellerException;
+import com.thanhnguyen.ecommercebackend.user.exception.SelfLockNotAllowedException;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerAlreadyExistsException;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerLockedException;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerNotFoundException;
@@ -250,6 +251,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleNotAShipper(NotAShipperException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("NOT_A_SHIPPER", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SelfLockNotAllowedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleSelfLockNotAllowed(SelfLockNotAllowedException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("SELF_LOCK_NOT_ALLOWED", ex.getMessage()));
     }
 
     @ExceptionHandler(SellerLockedException.class)

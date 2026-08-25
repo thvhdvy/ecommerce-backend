@@ -32,7 +32,13 @@ import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -312,6 +318,38 @@ class ReviewControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(new CreateReviewRequest(1, "Changed my mind"))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code", is("REVIEW_ALREADY_EXISTS")));
+    }
+
+    @Test
+    void create_concurrentDuplicateSubmit_shouldReturn409_notInternalError() throws Exception {
+        String sellerToken = becomeSeller("race1");
+        Long productId = createProductWithStock(sellerToken, "race1", new BigDecimal("10.00"), 5);
+        String customerToken = registerAndLogin("review-customer-race1@example.com", UserRole.CUSTOMER);
+        buildDeliveredOrder(customerToken, sellerToken, productId, "race1");
+
+        // Mo phong TOCTOU: 2 request cung luc deu qua duoc existsBy... check truoc khi ben kia commit.
+        // saveAndFlush + catch DataIntegrityViolationException phai bien request thua thanh 409, khong phai 500.
+        CountDownLatch startLatch = new CountDownLatch(1);
+        List<CompletableFuture<Integer>> futures = IntStream.range(0, 2)
+                .mapToObj(i -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        startLatch.await();
+                        return mockMvc.perform(post("/api/products/" + productId + "/reviews")
+                                        .header("Authorization", "Bearer " + customerToken)
+                                        .contentType(APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(new CreateReviewRequest(5, "Racing"))))
+                                .andReturn().getResponse().getStatus();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }))
+                .toList();
+        startLatch.countDown();
+
+        Set<Integer> statuses = futures.stream().map(CompletableFuture::join).collect(Collectors.toSet());
+
+        // Dung 1 trong 2 phai thanh cong (201), cai con lai phai la 409 - khong bao gio duoc la 500.
+        org.assertj.core.api.Assertions.assertThat(statuses).containsExactlyInAnyOrder(201, 409);
     }
 
     @Test

@@ -15,6 +15,7 @@ import com.thanhnguyen.ecommercebackend.review.exception.ReviewNotFoundException
 import com.thanhnguyen.ecommercebackend.review.repository.ReviewRepository;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -47,7 +48,15 @@ public class ReviewServiceImpl implements ReviewService {
                 .orElseThrow(() -> new ProductNotFoundException(productId));
 
         Review review = new Review(product, currentUser, eligibleOrderId, request.getRating(), request.getComment());
-        Review saved = reviewRepository.save(review);
+        Review saved;
+        try {
+            // saveAndFlush (khong phai save thuong) de bat DataIntegrityViolationException ngay tai day,
+            // phong TOCTOU: 2 request dong thoi cung qua duoc check existsBy... o tren truoc khi commit,
+            // request thua se vo unique constraint (product_id, user_id) o DB, khong de rot xuong 500 chung.
+            saved = reviewRepository.saveAndFlush(review);
+        } catch (DataIntegrityViolationException ex) {
+            throw new ReviewAlreadyExistsException();
+        }
 
         recalculateProductRating(productId);
 
