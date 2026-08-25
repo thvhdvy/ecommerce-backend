@@ -19,6 +19,9 @@ import com.thanhnguyen.ecommercebackend.product.exception.MultiplePrimaryImagesE
 import com.thanhnguyen.ecommercebackend.product.exception.NotASellerException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductOwnershipException;
+import com.thanhnguyen.ecommercebackend.review.exception.ReviewAlreadyExistsException;
+import com.thanhnguyen.ecommercebackend.review.exception.ReviewNotEligibleException;
+import com.thanhnguyen.ecommercebackend.review.exception.ReviewNotFoundException;
 import com.thanhnguyen.ecommercebackend.shipping.exception.DeliveryNotAllowedException;
 import com.thanhnguyen.ecommercebackend.shipping.exception.DeliveryNotFoundException;
 import com.thanhnguyen.ecommercebackend.shipping.exception.DeliveryOwnershipException;
@@ -245,6 +248,24 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleNotAShipper(NotAShipperException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("NOT_A_SHIPPER", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ReviewNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleReviewNotFound(ReviewNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("REVIEW_NOT_FOUND", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ReviewAlreadyExistsException.class)
+    public ResponseEntity<ApiResponse<Void>> handleReviewAlreadyExists(ReviewAlreadyExistsException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("REVIEW_ALREADY_EXISTS", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ReviewNotEligibleException.class)
+    public ResponseEntity<ApiResponse<Void>> handleReviewNotEligible(ReviewNotEligibleException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error("REVIEW_NOT_ELIGIBLE", ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

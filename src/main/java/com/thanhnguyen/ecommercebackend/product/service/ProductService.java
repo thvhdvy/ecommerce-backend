@@ -11,6 +11,8 @@ import com.thanhnguyen.ecommercebackend.product.dto.ProductUpdateRequest;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import org.springframework.data.domain.Pageable;
 
+import java.math.BigDecimal;
+
 public interface ProductService {
     ProductResponse create(User currentUser, ProductCreateRequest request);
 
@@ -30,4 +32,7 @@ public interface ProductService {
      * sau mỗi lần thay đổi quantityAvailable (reserve/release/update), không phải hành động của Product module.
      */
     void updateStockFlag(Long productId, boolean inStock);
+
+    /** Ghi de rating_avg (da tinh san boi Review module) — goi sau khi tao/an review. */
+    void recalculateRating(Long productId, BigDecimal ratingAvg);
 }

@@ -35,6 +35,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @Service
@@ -137,6 +138,15 @@ public class ProductServiceImpl implements ProductService {
             return;
         }
         product.setInStock(inStock);
+        productRepository.save(product);
+    }
+
+    @Override
+    @Transactional
+    public void recalculateRating(Long productId, BigDecimal ratingAvg) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new ProductNotFoundException(productId));
+        product.setRatingAvg(ratingAvg);
         productRepository.save(product);
     }
 

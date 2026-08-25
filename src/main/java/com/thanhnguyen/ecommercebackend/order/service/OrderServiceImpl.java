@@ -411,6 +411,18 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
+    private static final Set<OrderStatus> REVIEW_ELIGIBLE_STATUSES = Set.of(OrderStatus.DELIVERED, OrderStatus.COMPLETED);
+
+    @Override
+    @Transactional(readOnly = true)
+    public Long findEligibleOrderIdForReview(User customer, Long productId) {
+        return orderItemRepository
+                .findFirstByProductIdAndOrder_CustomerIdAndOrder_StatusInOrderByOrder_CreatedAtDesc(
+                        productId, customer.getId(), REVIEW_ELIGIBLE_STATUSES)
+                .map(item -> item.getOrder().getId())
+                .orElse(null);
+    }
+
     private Seller resolveSeller(User currentUser) {
         return sellerRepository.findByUserId(currentUser.getId())
                 .orElseThrow(NotASellerException::new);

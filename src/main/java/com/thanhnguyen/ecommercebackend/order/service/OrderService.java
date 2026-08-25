@@ -69,4 +69,10 @@ public interface OrderService {
 
     /** Scheduled job: tự động hoàn tất order đã DELIVERED quá 3 ngày → COMPLETED. */
     void autoCompleteDeliveredOrders();
+
+    /**
+     * Dùng bởi Review module để verify quyền review (chỉ người đã mua và order đã DELIVERED/COMPLETED).
+     * Trả về id của order gần nhất thỏa điều kiện, hoặc null nếu customer chưa từng mua/nhận productId này.
+     */
+    Long findEligibleOrderIdForReview(User customer, Long productId);
 }
