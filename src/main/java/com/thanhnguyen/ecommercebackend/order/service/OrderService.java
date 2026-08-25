@@ -16,6 +16,13 @@ public interface OrderService {
 
     OrderResponse cancel(User currentUser, Long orderId);
 
+    /**
+     * Admin force-cancel — dùng khi order đã PACKED trở đi (customer không tự hủy được nữa).
+     * Không check ownership (admin có thể hủy order của bất kỳ customer nào).
+     * Cho phép từ PENDING_PAYMENT/CONFIRMED/PACKED; trigger refund nếu order đã thanh toán (CONFIRMED/PACKED).
+     */
+    OrderResponse forceCancel(User admin, Long orderId);
+
     void expirePendingPayments();
 
     /** Đọc order theo id, không check ownership — dùng nội bộ bởi Payment module qua service interface. */

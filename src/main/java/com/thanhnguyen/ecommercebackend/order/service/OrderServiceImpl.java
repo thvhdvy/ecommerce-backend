@@ -43,6 +43,12 @@ public class OrderServiceImpl implements OrderService {
 
     private static final int PAYMENT_TIMEOUT_MINUTES = 15;
     private static final Set<OrderStatus> CANCELLABLE_STATUSES = Set.of(OrderStatus.PENDING_PAYMENT, OrderStatus.CONFIRMED);
+    // Admin force-cancel: superset cua CANCELLABLE_STATUSES + PACKED (customer khong tu huy duoc tu PACKED tro di).
+    // SHIPPED/DELIVERED/COMPLETED khong cancel duoc (dung Return/Refund flow — v2, ngoai scope v1).
+    private static final Set<OrderStatus> ADMIN_CANCELLABLE_STATUSES =
+            Set.of(OrderStatus.PENDING_PAYMENT, OrderStatus.CONFIRMED, OrderStatus.PACKED);
+    // Cancel tu cac status nay nghia la order da thanh toan thanh cong -> bat buoc trigger refund (design doc 0.6).
+    private static final Set<OrderStatus> PAID_STATUSES = Set.of(OrderStatus.CONFIRMED, OrderStatus.PACKED);
 
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
@@ -147,6 +153,38 @@ public class OrderServiceImpl implements OrderService {
 
         if (previousStatus == OrderStatus.CONFIRMED) {
             paymentService.refund(orderId, "Customer cancelled order after payment", "127.0.0.1");
+        }
+
+        return toResponse(saved);
+    }
+
+    @Override
+    @Transactional
+    public OrderResponse forceCancel(User admin, Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (!ADMIN_CANCELLABLE_STATUSES.contains(order.getStatus())) {
+            throw new OrderCancelNotAllowedException();
+        }
+
+        OrderStatus previousStatus = order.getStatus();
+
+        // Giong logic cancel(): chi PENDING_PAYMENT con reserved can release. Tu CONFIRMED/PACKED,
+        // reserved da ve 0 tu buoc confirmPayment (commitReservedStock), khong co gi de release.
+        if (previousStatus == OrderStatus.PENDING_PAYMENT) {
+            for (OrderItem item : order.getItems()) {
+                inventoryService.releaseStock(item.getProductId(), item.getQuantity());
+            }
+        }
+
+        order.setStatus(OrderStatus.CANCELLED);
+        Order saved = orderRepository.save(order);
+        orderStatusHistoryRepository.save(
+                new OrderStatusHistory(saved, previousStatus, OrderStatus.CANCELLED, admin, "Admin force-cancel"));
+
+        if (PAID_STATUSES.contains(previousStatus)) {
+            paymentService.refund(orderId, "Admin force-cancelled order after payment", "127.0.0.1");
         }
 
         return toResponse(saved);
