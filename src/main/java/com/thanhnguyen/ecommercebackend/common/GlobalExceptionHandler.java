@@ -35,6 +35,7 @@ import com.thanhnguyen.ecommercebackend.user.exception.NotEligibleForSellerExcep
 import com.thanhnguyen.ecommercebackend.user.exception.SelfLockNotAllowedException;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerAlreadyExistsException;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerLockedException;
+import com.thanhnguyen.ecommercebackend.user.exception.TooManyAttemptsException;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerNotFoundException;
 import com.thanhnguyen.ecommercebackend.user.exception.UserNotFoundException;
 import org.slf4j.Logger;
@@ -89,6 +90,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleAccountLocked(AccountLockedException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error("ACCOUNT_LOCKED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(TooManyAttemptsException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTooManyAttempts(TooManyAttemptsException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(ApiResponse.error("TOO_MANY_ATTEMPTS", ex.getMessage()));
     }
 
     @ExceptionHandler(InvalidResetTokenException.class)

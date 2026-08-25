@@ -32,6 +32,8 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -177,10 +179,26 @@ public class OrderServiceImpl implements OrderService {
                 new OrderStatusHistory(saved, previousStatus, OrderStatus.CANCELLED, actor, historyReason));
 
         if (paidStatuses.contains(previousStatus)) {
-            paymentService.refund(order.getId(), refundReason, "127.0.0.1");
+            refundAfterCommit(order.getId(), refundReason);
         }
 
         return toResponse(saved);
+    }
+
+    // VNPay refund goi mang ra ngoai — khong duoc chay ben trong transaction dang giu row lock cua
+    // order (UPDATE status + optimistic lock vua chay o tren). Chi trigger sau khi transaction hien
+    // tai commit xong, de connection/lock duoc giai phong truoc khi cho VNPay tra ve.
+    private void refundAfterCommit(Long orderId, String refundReason) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    paymentService.refund(orderId, refundReason, "127.0.0.1");
+                }
+            });
+        } else {
+            paymentService.refund(orderId, refundReason, "127.0.0.1");
+        }
     }
 
     @Override
@@ -386,7 +404,7 @@ public class OrderServiceImpl implements OrderService {
         orderStatusHistoryRepository.save(new OrderStatusHistory(
                 order, OrderStatus.FAILED_DELIVERY, OrderStatus.CANCELLED, null, "Auto-cancel after retry exhausted"));
 
-        paymentService.refund(orderId, "Auto-cancel after 2nd failed delivery attempt", "127.0.0.1");
+        refundAfterCommit(orderId, "Auto-cancel after 2nd failed delivery attempt");
     }
 
     @Override

@@ -5,20 +5,17 @@ import com.thanhnguyen.ecommercebackend.order.entity.OrderStatus;
 import com.thanhnguyen.ecommercebackend.order.service.OrderService;
 import com.thanhnguyen.ecommercebackend.payment.entity.Payment;
 import com.thanhnguyen.ecommercebackend.payment.entity.PaymentStatus;
-import com.thanhnguyen.ecommercebackend.payment.entity.RefundStatus;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotAllowedException;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotFoundException;
 import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotAllowedException;
 import com.thanhnguyen.ecommercebackend.payment.repository.PaymentRepository;
 import com.thanhnguyen.ecommercebackend.payment.repository.PaymentWebhookEventRepository;
-import com.thanhnguyen.ecommercebackend.payment.repository.RefundRepository;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayClient;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayQueryResult;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayRefundResult;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -36,7 +33,6 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -47,9 +43,6 @@ class PaymentServiceImplTest {
     private PaymentRepository paymentRepository;
 
     @Mock
-    private RefundRepository refundRepository;
-
-    @Mock
     private PaymentWebhookEventRepository webhookEventRepository;
 
     @Mock
@@ -57,6 +50,9 @@ class PaymentServiceImplTest {
 
     @Mock
     private VnpayClient vnpayClient;
+
+    @Mock
+    private RefundLedger refundLedger;
 
     @InjectMocks
     private PaymentServiceImpl paymentService;
@@ -190,46 +186,28 @@ class PaymentServiceImplTest {
     }
 
     @Test
-    void refund_shouldThrow_whenPaymentNotSucceeded() {
-        Payment payment = new Payment(10L, "10-999", new BigDecimal("45.00"));
-        payment.setStatus(PaymentStatus.PENDING);
-        when(paymentRepository.findByOrderId(10L)).thenReturn(Optional.of(payment));
-
-        assertThatThrownBy(() -> paymentService.refund(10L, "reason", "127.0.0.1"))
-                .isInstanceOf(RefundNotAllowedException.class);
-    }
-
-    @Test
-    void refund_shouldThrow_whenAlreadyFullyRefunded() {
-        Payment payment = new Payment(10L, "10-999", new BigDecimal("45.00"));
-        payment.setId(5L);
-        payment.setStatus(PaymentStatus.SUCCEEDED);
-        when(paymentRepository.findByOrderId(10L)).thenReturn(Optional.of(payment));
-        when(refundRepository.sumAmountByPaymentIdAndStatusIn(eq(5L), any()))
-                .thenReturn(new BigDecimal("45.00"));
-
-        assertThatThrownBy(() -> paymentService.refund(10L, "reason", "127.0.0.1"))
-                .isInstanceOf(RefundNotAllowedException.class);
-    }
-
-    @Test
-    void refund_shouldMarkRefunded_whenVnpaySucceeds() {
-        Payment payment = new Payment(10L, "10-999", new BigDecimal("45.00"));
-        payment.setId(5L);
-        payment.setStatus(PaymentStatus.SUCCEEDED);
-        payment.setVnpTransactionNo("VNP-TXN-1");
-        when(paymentRepository.findByOrderId(10L)).thenReturn(Optional.of(payment));
-        when(refundRepository.sumAmountByPaymentIdAndStatusIn(eq(5L), any())).thenReturn(BigDecimal.ZERO);
-        when(refundRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    void refund_shouldCallVnpayThenFinalize_afterLedgerInitiate() {
+        RefundLedger.RefundInitiation initiation = new RefundLedger.RefundInitiation(
+                7L, new BigDecimal("45.00"), "10-999", "VNP-TXN-1", java.time.LocalDateTime.now());
+        when(refundLedger.initiate(10L, "customer cancelled")).thenReturn(initiation);
+        VnpayRefundResult result = VnpayRefundResult.success("VNP-REFUND-1");
         when(vnpayClient.requestRefund(eq("10-999"), eq("VNP-TXN-1"), any(), eq(new BigDecimal("45.00")), anyString(), anyString()))
-                .thenReturn(VnpayRefundResult.success("VNP-REFUND-1"));
+                .thenReturn(result);
 
         paymentService.refund(10L, "customer cancelled", "127.0.0.1");
 
-        ArgumentCaptor<com.thanhnguyen.ecommercebackend.payment.entity.Refund> captor =
-                ArgumentCaptor.forClass(com.thanhnguyen.ecommercebackend.payment.entity.Refund.class);
-        verify(refundRepository, times(2)).save(captor.capture());
-        assertThat(captor.getValue().getStatus()).isEqualTo(RefundStatus.REFUNDED);
+        verify(refundLedger).finalizeResult(7L, 10L, result);
+    }
+
+    @Test
+    void refund_shouldPropagateException_whenLedgerInitiateRejects() {
+        when(refundLedger.initiate(10L, "reason"))
+                .thenThrow(new RefundNotAllowedException("Payment not succeeded, cannot refund order 10"));
+
+        assertThatThrownBy(() -> paymentService.refund(10L, "reason", "127.0.0.1"))
+                .isInstanceOf(RefundNotAllowedException.class);
+
+        verify(vnpayClient, never()).requestRefund(anyString(), any(), any(), any(), anyString(), anyString());
     }
 
     @Test

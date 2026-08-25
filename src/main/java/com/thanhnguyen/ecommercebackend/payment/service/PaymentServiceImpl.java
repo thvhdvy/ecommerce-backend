@@ -7,14 +7,10 @@ import com.thanhnguyen.ecommercebackend.payment.dto.PaymentIntentResponse;
 import com.thanhnguyen.ecommercebackend.payment.dto.PaymentStatusResponse;
 import com.thanhnguyen.ecommercebackend.payment.entity.Payment;
 import com.thanhnguyen.ecommercebackend.payment.entity.PaymentStatus;
-import com.thanhnguyen.ecommercebackend.payment.entity.Refund;
-import com.thanhnguyen.ecommercebackend.payment.entity.RefundStatus;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotAllowedException;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotFoundException;
-import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotAllowedException;
 import com.thanhnguyen.ecommercebackend.payment.repository.PaymentRepository;
 import com.thanhnguyen.ecommercebackend.payment.repository.PaymentWebhookEventRepository;
-import com.thanhnguyen.ecommercebackend.payment.repository.RefundRepository;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayClient;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayQueryResult;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayRefundResult;
@@ -26,7 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -39,10 +34,10 @@ public class PaymentServiceImpl implements PaymentService {
             Set.of(OrderStatus.PENDING_PAYMENT, OrderStatus.PAYMENT_FAILED);
 
     private final PaymentRepository paymentRepository;
-    private final RefundRepository refundRepository;
     private final PaymentWebhookEventRepository webhookEventRepository;
     private final OrderService orderService;
     private final VnpayClient vnpayClient;
+    private final RefundLedger refundLedger;
 
     @Override
     @Transactional
@@ -185,38 +180,17 @@ public class PaymentServiceImpl implements PaymentService {
         return saved;
     }
 
+    // Khong @Transactional: chi orchestrate, khong tu ghi DB. requestRefund() la loi goi mang toi
+    // VNPay, phai nam ngoai transaction — xem RefundLedger.
     @Override
-    @Transactional
     public void refund(Long orderId, String reason, String clientIp) {
-        Payment payment = paymentRepository.findByOrderId(orderId)
-                .orElseThrow(() -> new PaymentNotFoundException(orderId));
-
-        if (payment.getStatus() != PaymentStatus.SUCCEEDED) {
-            throw new RefundNotAllowedException("Payment not succeeded, cannot refund order " + orderId);
-        }
-
-        BigDecimal alreadyRefunded = refundRepository.sumAmountByPaymentIdAndStatusIn(
-                payment.getId(), List.of(RefundStatus.REFUND_PENDING, RefundStatus.REFUNDED));
-        BigDecimal remaining = payment.getAmount().subtract(alreadyRefunded);
-        if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new RefundNotAllowedException("Payment for order " + orderId + " already fully refunded");
-        }
-
-        Refund refund = new Refund(payment, orderId, remaining, reason);
-        refund = refundRepository.save(refund);
+        RefundLedger.RefundInitiation initiation = refundLedger.initiate(orderId, reason);
 
         VnpayRefundResult result = vnpayClient.requestRefund(
-                payment.getVnpTxnRef(), payment.getVnpTransactionNo(), payment.getCreatedAt(),
-                remaining, reason, clientIp);
+                initiation.vnpTxnRef(), initiation.vnpTransactionNo(), initiation.paymentCreatedAt(),
+                initiation.amount(), reason, clientIp);
 
-        if (result.success()) {
-            refund.setStatus(RefundStatus.REFUNDED);
-            refund.setVnpRefundTransactionNo(result.vnpTransactionNo());
-        } else {
-            refund.setStatus(RefundStatus.REFUND_FAILED);
-            log.error("VNPay refund failed for order {}: responseCode={}", orderId, result.responseCode());
-        }
-        refundRepository.save(refund);
+        refundLedger.finalizeResult(initiation.refundId(), orderId, result);
     }
 
     private PaymentStatusResponse toStatusResponse(Payment payment) {

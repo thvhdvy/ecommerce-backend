@@ -1,6 +1,7 @@
 package com.thanhnguyen.ecommercebackend.user.service;
 
 import com.thanhnguyen.ecommercebackend.security.JwtService;
+import com.thanhnguyen.ecommercebackend.security.RateLimiter;
 import com.thanhnguyen.ecommercebackend.user.dto.LoginRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.LoginResponse;
 import com.thanhnguyen.ecommercebackend.user.entity.PasswordResetToken;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -49,6 +51,9 @@ class AuthServiceImplTest {
 
     @Mock
     private PasswordResetTokenRepository passwordResetTokenRepository;
+
+    @Spy
+    private RateLimiter rateLimiter = new RateLimiter();
 
     @InjectMocks
     private AuthServiceImpl authService;
@@ -109,6 +114,31 @@ class AuthServiceImplTest {
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("user@example.com", "plainPassword")))
                 .isInstanceOf(AccountLockedException.class);
+    }
+
+    @Test
+    void login_shouldThrowTooManyAttempts_afterExceedingLimitForSameEmail() {
+        when(userRepository.findByEmail("bruteforced@example.com")).thenReturn(Optional.empty());
+
+        for (int i = 0; i < 10; i++) {
+            assertThatThrownBy(() -> authService.login(new LoginRequest("bruteforced@example.com", "pw")))
+                    .isInstanceOf(InvalidCredentialsException.class);
+        }
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("bruteforced@example.com", "pw")))
+                .isInstanceOf(com.thanhnguyen.ecommercebackend.user.exception.TooManyAttemptsException.class);
+    }
+
+    @Test
+    void forgotPassword_shouldThrowTooManyAttempts_afterExceedingLimitForSameEmail() {
+        when(userRepository.findByEmail("spammed@example.com")).thenReturn(Optional.empty());
+
+        for (int i = 0; i < 5; i++) {
+            authService.forgotPassword("spammed@example.com");
+        }
+
+        assertThatThrownBy(() -> authService.forgotPassword("spammed@example.com"))
+                .isInstanceOf(com.thanhnguyen.ecommercebackend.user.exception.TooManyAttemptsException.class);
     }
 
     @Test

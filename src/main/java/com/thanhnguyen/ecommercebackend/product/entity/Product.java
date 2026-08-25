@@ -19,6 +19,7 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.BatchSize;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -73,8 +74,11 @@ public class Product {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
+    // BatchSize: khi list/search tra ve nhieu Product, N lan load rieng images cua tung san pham
+    // duoc gop thanh 1 truy van "WHERE product_id IN (...)" thay vi N truy van rieng le.
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("id ASC")
+    @BatchSize(size = 25)
     private List<ProductImage> images = new ArrayList<>();
 
     @PrePersist
