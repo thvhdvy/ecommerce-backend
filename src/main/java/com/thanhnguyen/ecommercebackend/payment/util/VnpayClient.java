@@ -16,10 +16,12 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
@@ -95,7 +97,9 @@ public class VnpayClient {
 
         String query = buildEncodedQuery(toVerify);
         String computedHash = hmacSHA512(hashSecret, query);
-        return computedHash.equalsIgnoreCase(receivedHash);
+        return MessageDigest.isEqual(
+                computedHash.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII),
+                receivedHash.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII));
     }
 
     /**
