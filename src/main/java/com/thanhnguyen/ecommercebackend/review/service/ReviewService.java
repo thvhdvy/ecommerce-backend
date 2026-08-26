@@ -1,5 +1,7 @@
 package com.thanhnguyen.ecommercebackend.review.service;
 
+import org.springframework.data.domain.Pageable;
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.review.dto.CreateReviewRequest;
 import com.thanhnguyen.ecommercebackend.review.dto.ReviewResponse;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
@@ -14,7 +16,7 @@ public interface ReviewService {
      * Trả VISIBLE review của tất cả mọi người, cộng thêm HIDDEN review của chính currentUserId
      * (nếu có, để tác giả biết review của mình đã bị ẩn) — currentUserId null với caller ẩn danh.
      */
-    List<ReviewResponse> listByProduct(Long productId, Long currentUserId);
+    PageResponse<ReviewResponse> listByProduct(Long productId, Long currentUserId, Pageable pageable);
 
     /** Admin ẩn review vi phạm (soft delete qua status), tính lại rating_avg của product. */
     ReviewResponse hide(Long reviewId);

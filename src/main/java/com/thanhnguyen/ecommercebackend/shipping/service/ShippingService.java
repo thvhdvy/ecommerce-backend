@@ -1,5 +1,7 @@
 package com.thanhnguyen.ecommercebackend.shipping.service;
 
+import org.springframework.data.domain.Pageable;
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.shipping.dto.DeliveryResponse;
 import com.thanhnguyen.ecommercebackend.shipping.dto.DeliveryStatusUpdateRequest;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
@@ -14,7 +16,7 @@ public interface ShippingService {
     DeliveryResponse assignShipper(Long orderId, Long shipperId, User actor);
 
     /** Shipper xem các delivery được gán cho mình. */
-    List<DeliveryResponse> listMyDeliveries(User currentUser);
+    PageResponse<DeliveryResponse> listMyDeliveries(User currentUser, Pageable pageable);
 
     /** Shipper cập nhật trạng thái giao hàng (IN_TRANSIT/DELIVERED/FAILED). */
     DeliveryResponse updateDeliveryStatus(User currentUser, Long deliveryId, DeliveryStatusUpdateRequest request);

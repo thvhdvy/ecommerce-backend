@@ -1,5 +1,11 @@
 package com.thanhnguyen.ecommercebackend.user.controller;
 
+import java.util.Set;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Pageable;
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
+import com.thanhnguyen.ecommercebackend.common.PageRequests;
 import com.thanhnguyen.ecommercebackend.common.ApiResponse;
 import com.thanhnguyen.ecommercebackend.user.dto.LockRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.SellerResponse;
@@ -15,7 +21,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/admin/sellers")
@@ -25,9 +30,13 @@ public class AdminSellerController {
 
     private final SellerService sellerService;
 
+    private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt", "storeName");
+
     @GetMapping
-    public ResponseEntity<ApiResponse<List<SellerResponse>>> listAll() {
-        return ResponseEntity.ok(ApiResponse.success(sellerService.listAll()));
+    public ResponseEntity<ApiResponse<PageResponse<SellerResponse>>> listAll(
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.success(
+                sellerService.listAll(PageRequests.capped(pageable, SORTABLE_FIELDS))));
     }
 
     @PatchMapping("/{id}/lock")

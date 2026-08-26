@@ -23,13 +23,12 @@ import com.thanhnguyen.ecommercebackend.order.repository.OrderItemRepository;
 import com.thanhnguyen.ecommercebackend.order.repository.OrderRepository;
 import com.thanhnguyen.ecommercebackend.order.repository.OrderStatusHistoryRepository;
 import com.thanhnguyen.ecommercebackend.payment.service.PaymentService;
-import com.thanhnguyen.ecommercebackend.product.exception.NotASellerException;
 import com.thanhnguyen.ecommercebackend.user.entity.Seller;
-import com.thanhnguyen.ecommercebackend.user.entity.SellerStatus;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
-import com.thanhnguyen.ecommercebackend.user.exception.SellerLockedException;
-import com.thanhnguyen.ecommercebackend.user.repository.SellerRepository;
+import com.thanhnguyen.ecommercebackend.user.service.SellerService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -43,9 +42,13 @@ import java.util.List;
 import java.util.Set;
 
 @Service
+@Slf4j
 public class OrderServiceImpl implements OrderService {
 
     private static final int PAYMENT_TIMEOUT_MINUTES = 15;
+    // Gioi han so order xu ly moi lan scheduled job chay — backlog lon (vd sau downtime) duoc tieu
+    // dan qua nhieu lan chay thay vi 1 transaction/1 lan quet khong lo.
+    private static final int MAINTENANCE_BATCH_SIZE = 100;
     private static final Set<OrderStatus> CANCELLABLE_STATUSES = Set.of(OrderStatus.PENDING_PAYMENT, OrderStatus.CONFIRMED);
     // Admin force-cancel: superset cua CANCELLABLE_STATUSES + PACKED (customer khong tu huy duoc tu PACKED tro di).
     // SHIPPED/DELIVERED/COMPLETED khong cancel duoc (dung Return/Refund flow — v2, ngoai scope v1).
@@ -60,7 +63,8 @@ public class OrderServiceImpl implements OrderService {
     private final CartService cartService;
     private final InventoryService inventoryService;
     private final PaymentService paymentService;
-    private final SellerRepository sellerRepository;
+    private final SellerService sellerService;
+    private final OrderMaintenanceProcessor maintenanceProcessor;
 
     // PaymentServiceImpl phụ thuộc ngược lại OrderService (confirmPayment/markPaymentFailed) —
     // @Lazy ở chiều Order->Payment (chỉ dùng khi cancel order đã CONFIRMED) để phá vòng lặp khởi tạo bean.
@@ -71,14 +75,16 @@ public class OrderServiceImpl implements OrderService {
             CartService cartService,
             InventoryService inventoryService,
             @Lazy PaymentService paymentService,
-            SellerRepository sellerRepository) {
+            SellerService sellerService,
+            OrderMaintenanceProcessor maintenanceProcessor) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
         this.cartService = cartService;
         this.inventoryService = inventoryService;
         this.paymentService = paymentService;
-        this.sellerRepository = sellerRepository;
+        this.sellerService = sellerService;
+        this.maintenanceProcessor = maintenanceProcessor;
     }
 
     @Override
@@ -199,22 +205,21 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
+    // Khong @Transactional o day (co chu dich): moi order duoc xu ly trong transaction RIENG boi
+    // maintenanceProcessor — 1 order loi chi rollback + log rieng order do, khong chan ca batch
+    // (truoc day 1 order "doc" dau danh sach se lam worker rollback het va ket vinh vien tai do).
     @Override
-    @Transactional
     public void expirePendingPayments() {
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(PAYMENT_TIMEOUT_MINUTES);
-        List<Order> expiredOrders = orderRepository.findAllByStatusAndCreatedAtBefore(OrderStatus.PENDING_PAYMENT, cutoff);
+        List<Long> orderIds = orderRepository.findIdsByStatusAndCreatedAtBefore(
+                OrderStatus.PENDING_PAYMENT, cutoff, PageRequest.of(0, MAINTENANCE_BATCH_SIZE));
 
-        for (Order order : expiredOrders) {
-            for (OrderItem item : order.getItems()) {
-                inventoryService.releaseStock(item.getProductId(), item.getQuantity());
+        for (Long orderId : orderIds) {
+            try {
+                maintenanceProcessor.expireOne(orderId, PAYMENT_TIMEOUT_MINUTES);
+            } catch (Exception ex) {
+                log.error("Failed to expire pending payment for order {}", orderId, ex);
             }
-
-            order.setStatus(OrderStatus.PAYMENT_EXPIRED);
-            orderRepository.save(order);
-            orderStatusHistoryRepository.save(new OrderStatusHistory(
-                    order, OrderStatus.PENDING_PAYMENT, OrderStatus.PAYMENT_EXPIRED, null,
-                    "Payment timeout after " + PAYMENT_TIMEOUT_MINUTES + " minutes"));
         }
     }
 
@@ -283,7 +288,7 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional(readOnly = true)
     public PageResponse<OrderResponse> listSellerOrders(User currentUser, Pageable pageable) {
-        Seller seller = resolveSeller(currentUser);
+        Seller seller = sellerService.requireActiveSeller(currentUser.getId());
         // Paginate o cap order (khong phai cap item); moi order chi tra ve item thuoc seller nay
         // (data visibility rule — design doc 0.6). items load theo lo nho @BatchSize tren Order.items.
         return PageResponse.from(
@@ -296,7 +301,7 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public OrderItemResponse packOrderItem(User currentUser, Long orderItemId) {
-        Seller seller = resolveSeller(currentUser);
+        Seller seller = sellerService.requireActiveSeller(currentUser.getId());
 
         OrderItem item = orderItemRepository.findById(orderItemId)
                 .orElseThrow(() -> new OrderItemNotFoundException(orderItemId));
@@ -404,18 +409,19 @@ public class OrderServiceImpl implements OrderService {
         refundAfterCommit(orderId, "Auto-cancel after 2nd failed delivery attempt");
     }
 
+    // Cung mo hinh voi expirePendingPayments: khong @Transactional, moi order 1 transaction rieng.
     @Override
-    @Transactional
     public void autoCompleteDeliveredOrders() {
         LocalDateTime cutoff = LocalDateTime.now().minusDays(AUTO_COMPLETE_DAYS);
-        List<Order> deliveredOrders = orderRepository.findAllByStatusAndUpdatedAtBefore(OrderStatus.DELIVERED, cutoff);
+        List<Long> orderIds = orderRepository.findIdsByStatusAndUpdatedAtBefore(
+                OrderStatus.DELIVERED, cutoff, PageRequest.of(0, MAINTENANCE_BATCH_SIZE));
 
-        for (Order order : deliveredOrders) {
-            order.setStatus(OrderStatus.COMPLETED);
-            orderRepository.save(order);
-            orderStatusHistoryRepository.save(new OrderStatusHistory(
-                    order, OrderStatus.DELIVERED, OrderStatus.COMPLETED, null,
-                    "Auto-completed after " + AUTO_COMPLETE_DAYS + " days"));
+        for (Long orderId : orderIds) {
+            try {
+                maintenanceProcessor.completeOne(orderId, AUTO_COMPLETE_DAYS);
+            } catch (Exception ex) {
+                log.error("Failed to auto-complete delivered order {}", orderId, ex);
+            }
         }
     }
 
@@ -435,15 +441,6 @@ public class OrderServiceImpl implements OrderService {
     @Transactional(readOnly = true)
     public PageResponse<OrderResponse> listAllOrders(Pageable pageable) {
         return PageResponse.from(orderRepository.findAll(pageable).map(this::toResponse));
-    }
-
-    private Seller resolveSeller(User currentUser) {
-        Seller seller = sellerRepository.findByUserId(currentUser.getId())
-                .orElseThrow(NotASellerException::new);
-        if (seller.getStatus() == SellerStatus.LOCKED) {
-            throw new SellerLockedException();
-        }
-        return seller;
     }
 
     /**

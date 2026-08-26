@@ -1,5 +1,11 @@
 package com.thanhnguyen.ecommercebackend.payment.controller;
 
+import java.util.Set;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Pageable;
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
+import com.thanhnguyen.ecommercebackend.common.PageRequests;
 import com.thanhnguyen.ecommercebackend.common.ApiResponse;
 import com.thanhnguyen.ecommercebackend.payment.dto.RefundResponse;
 import com.thanhnguyen.ecommercebackend.payment.dto.ResolveRefundRequest;
@@ -15,7 +21,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/admin/refunds")
@@ -25,9 +30,13 @@ public class AdminRefundController {
 
     private final PaymentService paymentService;
 
+    private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt");
+
     @GetMapping("/failed")
-    public ResponseEntity<ApiResponse<List<RefundResponse>>> listFailed() {
-        return ResponseEntity.ok(ApiResponse.success(paymentService.listFailedRefunds()));
+    public ResponseEntity<ApiResponse<PageResponse<RefundResponse>>> listFailed(
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.success(
+                paymentService.listFailedRefunds(PageRequests.capped(pageable, SORTABLE_FIELDS))));
     }
 
     @PatchMapping("/{id}/resolve")

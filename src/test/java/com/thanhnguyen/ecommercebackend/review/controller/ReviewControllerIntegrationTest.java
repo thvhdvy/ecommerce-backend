@@ -385,7 +385,7 @@ class ReviewControllerIntegrationTest {
 
         mockMvc.perform(get("/api/products/" + productId + "/reviews"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(1)));
+                .andExpect(jsonPath("$.data.content.length()", is(1)));
 
         String adminToken = registerAndLogin("review-admin-hide-action1@example.com", UserRole.ADMIN);
         mockMvc.perform(patch("/api/admin/reviews/" + reviewId + "/hide")
@@ -396,14 +396,14 @@ class ReviewControllerIntegrationTest {
         // Anonymous / nguoi khac khong thay review da bi an.
         mockMvc.perform(get("/api/products/" + productId + "/reviews"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(0)));
+                .andExpect(jsonPath("$.data.content.length()", is(0)));
 
         // Chinh tac gia van thay lai review cua minh (biet no da bi an) khi goi co token.
         mockMvc.perform(get("/api/products/" + productId + "/reviews")
                         .header("Authorization", "Bearer " + customerToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(1)))
-                .andExpect(jsonPath("$.data[0].status", is("HIDDEN")));
+                .andExpect(jsonPath("$.data.content.length()", is(1)))
+                .andExpect(jsonPath("$.data.content[0].status", is("HIDDEN")));
 
         mockMvc.perform(get("/api/products/" + productId))
                 .andExpect(status().isOk())
@@ -438,7 +438,7 @@ class ReviewControllerIntegrationTest {
 
         mockMvc.perform(get("/api/products/" + productId + "/reviews"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(1)));
+                .andExpect(jsonPath("$.data.content.length()", is(1)));
 
         mockMvc.perform(get("/api/products/" + productId))
                 .andExpect(status().isOk())

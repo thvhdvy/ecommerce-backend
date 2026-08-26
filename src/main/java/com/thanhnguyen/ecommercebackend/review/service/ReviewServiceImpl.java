@@ -1,9 +1,9 @@
 package com.thanhnguyen.ecommercebackend.review.service;
 
+import org.springframework.data.domain.Pageable;
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.order.service.OrderService;
 import com.thanhnguyen.ecommercebackend.product.entity.Product;
-import com.thanhnguyen.ecommercebackend.product.exception.ProductNotFoundException;
-import com.thanhnguyen.ecommercebackend.product.repository.ProductRepository;
 import com.thanhnguyen.ecommercebackend.product.service.ProductService;
 import com.thanhnguyen.ecommercebackend.review.dto.CreateReviewRequest;
 import com.thanhnguyen.ecommercebackend.review.dto.ReviewResponse;
@@ -28,7 +28,6 @@ import java.util.List;
 public class ReviewServiceImpl implements ReviewService {
 
     private final ReviewRepository reviewRepository;
-    private final ProductRepository productRepository;
     private final OrderService orderService;
     private final ProductService productService;
 
@@ -44,8 +43,7 @@ public class ReviewServiceImpl implements ReviewService {
             throw new ReviewAlreadyExistsException();
         }
 
-        Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new ProductNotFoundException(productId));
+        Product product = productService.getEntityById(productId);
 
         Review review = new Review(product, currentUser, eligibleOrderId, request.getRating(), request.getComment());
         Review saved;
@@ -65,11 +63,10 @@ public class ReviewServiceImpl implements ReviewService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<ReviewResponse> listByProduct(Long productId, Long currentUserId) {
-        return reviewRepository.findAllVisibleOrOwnByProductId(productId, currentUserId)
-                .stream()
-                .map(this::toResponse)
-                .toList();
+    public PageResponse<ReviewResponse> listByProduct(Long productId, Long currentUserId, Pageable pageable) {
+        return PageResponse.from(
+                reviewRepository.findAllVisibleOrOwnByProductId(productId, currentUserId, pageable)
+                        .map(this::toResponse));
     }
 
     @Override
@@ -101,15 +98,13 @@ public class ReviewServiceImpl implements ReviewService {
     }
 
     private void recalculateProductRating(Long productId) {
-        // Khoa row Product TRUOC khi doc AVG (khong phai sau) — neu 2 review cung product duoc tao
-        // gan nhu dong thoi, request thua se cho o day cho toi khi request truoc commit xong; luc do
-        // AVG doc lai se thay ca 2 review (thay vi ghi de nhau, moi ben chi thay review cua rieng minh).
-        productRepository.findByIdForRatingUpdate(productId)
-                .orElseThrow(() -> new ProductNotFoundException(productId));
-
-        Double avg = reviewRepository.findAvgRatingByProductIdAndStatus(productId, ReviewStatus.VISIBLE);
-        BigDecimal ratingAvg = BigDecimal.valueOf(avg == null ? 0.0 : avg).setScale(2, RoundingMode.HALF_UP);
-        productService.recalculateRating(productId, ratingAvg);
+        // Product module khoa row product truoc, roi moi goi supplier nay doc AVG (xem javadoc
+        // ProductService.recalculateRating) — thu tu lock-truoc-doc-sau giu nguyen nhu truoc,
+        // nhung viec khoa row thuoc ve Product module, Review khong dung ProductRepository nua.
+        productService.recalculateRating(productId, () -> {
+            Double avg = reviewRepository.findAvgRatingByProductIdAndStatus(productId, ReviewStatus.VISIBLE);
+            return BigDecimal.valueOf(avg == null ? 0.0 : avg).setScale(2, RoundingMode.HALF_UP);
+        });
     }
 
     private ReviewResponse toResponse(Review review) {

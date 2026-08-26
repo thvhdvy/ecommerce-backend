@@ -1,5 +1,7 @@
 package com.thanhnguyen.ecommercebackend.payment.service;
 
+import org.springframework.data.domain.Pageable;
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderResponse;
 import com.thanhnguyen.ecommercebackend.order.entity.OrderStatus;
 import com.thanhnguyen.ecommercebackend.order.service.OrderService;
@@ -172,8 +174,8 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    public List<RefundResponse> listFailedRefunds() {
-        return refundLedger.listFailedRefunds().stream().map(this::toRefundResponse).toList();
+    public PageResponse<RefundResponse> listFailedRefunds(Pageable pageable) {
+        return PageResponse.from(refundLedger.listFailedRefunds(pageable).map(this::toRefundResponse));
     }
 
     @Override
@@ -182,10 +184,9 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    public List<PaymentDisputeResponse> listAmountMismatches() {
-        return webhookEventRepository.findByEventTypeOrderByProcessedAtDesc("AMOUNT_MISMATCH").stream()
-                .map(this::toDisputeResponse)
-                .toList();
+    public PageResponse<PaymentDisputeResponse> listAmountMismatches(Pageable pageable) {
+        return PageResponse.from(
+                webhookEventRepository.findByEventType("AMOUNT_MISMATCH", pageable).map(this::toDisputeResponse));
     }
 
     private PaymentDisputeResponse toDisputeResponse(PaymentWebhookEvent event) {

@@ -21,9 +21,16 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     Optional<Order> findByIdAndCustomerId(Long id, Long customerId);
 
-    List<Order> findAllByStatusAndCreatedAtBefore(OrderStatus status, LocalDateTime cutoff);
+    // Chi lay id (khong load entity + items) cho scheduled job: moi order duoc xu ly lai trong
+    // transaction rieng (OrderMaintenanceProcessor doc lai entity), va Pageable gioi han batch size
+    // moi lan chay — backlog lon sau downtime khong keo ca bang vao memory.
+    @Query("SELECT o.id FROM Order o WHERE o.status = :status AND o.createdAt < :cutoff ORDER BY o.id")
+    List<Long> findIdsByStatusAndCreatedAtBefore(
+            @Param("status") OrderStatus status, @Param("cutoff") LocalDateTime cutoff, Pageable pageable);
 
-    List<Order> findAllByStatusAndUpdatedAtBefore(OrderStatus status, LocalDateTime cutoff);
+    @Query("SELECT o.id FROM Order o WHERE o.status = :status AND o.updatedAt < :cutoff ORDER BY o.id")
+    List<Long> findIdsByStatusAndUpdatedAtBefore(
+            @Param("status") OrderStatus status, @Param("cutoff") LocalDateTime cutoff, Pageable pageable);
 
     /**
      * Order co chua it nhat 1 item cua seller — paginate o cap order (khong phai cap item) de

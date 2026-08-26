@@ -22,6 +22,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
@@ -301,14 +304,15 @@ class PaymentServiceImplTest {
         Refund refund = new Refund(new Payment(10L, "10-999", new BigDecimal("45.00")), 10L, new BigDecimal("45.00"), "reason");
         refund.setId(7L);
         refund.setStatus(RefundStatus.REFUND_FAILED);
-        when(refundLedger.listFailedRefunds()).thenReturn(List.of(refund));
+        when(refundLedger.listFailedRefunds(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(refund)));
 
-        var result = paymentService.listFailedRefunds();
+        var result = paymentService.listFailedRefunds(PageRequest.of(0, 20));
 
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getId()).isEqualTo(7L);
-        assertThat(result.get(0).getOrderId()).isEqualTo(10L);
-        assertThat(result.get(0).getStatus()).isEqualTo(RefundStatus.REFUND_FAILED);
+        assertThat(result.getContent()).hasSize(1);
+        assertThat(result.getContent().get(0).getId()).isEqualTo(7L);
+        assertThat(result.getContent().get(0).getOrderId()).isEqualTo(10L);
+        assertThat(result.getContent().get(0).getStatus()).isEqualTo(RefundStatus.REFUND_FAILED);
     }
 
     @Test
@@ -326,14 +330,14 @@ class PaymentServiceImplTest {
         event.setEventType("AMOUNT_MISMATCH");
         event.setPayload("{...}");
         event.setProcessedAt(java.time.LocalDateTime.now());
-        when(webhookEventRepository.findByEventTypeOrderByProcessedAtDesc("AMOUNT_MISMATCH"))
-                .thenReturn(List.of(event));
+        when(webhookEventRepository.findByEventType(eq("AMOUNT_MISMATCH"), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(event)));
 
-        var result = paymentService.listAmountMismatches();
+        var result = paymentService.listAmountMismatches(PageRequest.of(0, 20));
 
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getVnpTransactionNo()).isEqualTo("VNP-TXN-4");
-        assertThat(result.get(0).getEventType()).isEqualTo("AMOUNT_MISMATCH");
+        assertThat(result.getContent()).hasSize(1);
+        assertThat(result.getContent().get(0).getVnpTransactionNo()).isEqualTo("VNP-TXN-4");
+        assertThat(result.getContent().get(0).getEventType()).isEqualTo("AMOUNT_MISMATCH");
     }
 
     private Map<String, String> ipnParams(String txnRef, String transactionNo, String responseCode, String amount) {

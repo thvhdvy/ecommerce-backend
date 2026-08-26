@@ -1,6 +1,7 @@
 package com.thanhnguyen.ecommercebackend.common;
 
 import com.thanhnguyen.ecommercebackend.cart.exception.CartItemNotFoundException;
+import com.thanhnguyen.ecommercebackend.cart.exception.CartOwnershipException;
 import com.thanhnguyen.ecommercebackend.inventory.exception.InsufficientStockException;
 import com.thanhnguyen.ecommercebackend.inventory.exception.InventoryNotFoundException;
 import com.thanhnguyen.ecommercebackend.order.exception.EmptyCartException;
@@ -15,9 +16,9 @@ import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotAllowedExcept
 import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.BrandNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.CategoryNotFoundException;
-import com.thanhnguyen.ecommercebackend.product.exception.InvalidSortFieldException;
+import com.thanhnguyen.ecommercebackend.common.InvalidSortFieldException;
 import com.thanhnguyen.ecommercebackend.product.exception.MultiplePrimaryImagesException;
-import com.thanhnguyen.ecommercebackend.product.exception.NotASellerException;
+import com.thanhnguyen.ecommercebackend.user.exception.NotASellerException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductOwnershipException;
 import com.thanhnguyen.ecommercebackend.review.exception.ReviewAlreadyExistsException;
@@ -195,6 +196,12 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error("CART_ITEM_NOT_FOUND", ex.getMessage()));
     }
 
+    @ExceptionHandler(CartOwnershipException.class)
+    public ResponseEntity<ApiResponse<Void>> handleCartOwnership(CartOwnershipException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error("CART_OWNERSHIP_VIOLATION", ex.getMessage()));
+    }
+
     @ExceptionHandler(PaymentNotFoundException.class)
     public ResponseEntity<ApiResponse<Void>> handlePaymentNotFound(PaymentNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -261,9 +268,11 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error("DELIVERY_NOT_ALLOWED", ex.getMessage()));
     }
 
+    // 403 (khong phai 409 nhu truoc): cung ban chat "khong du quyen/khong dung vai tro" voi
+    // NotASellerException — thong nhat status code cho 2 case tuong duong.
     @ExceptionHandler(NotAShipperException.class)
     public ResponseEntity<ApiResponse<Void>> handleNotAShipper(NotAShipperException ex) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error("NOT_A_SHIPPER", ex.getMessage()));
     }
 

@@ -7,6 +7,7 @@ import com.thanhnguyen.ecommercebackend.cart.dto.UpdateCartItemRequest;
 import com.thanhnguyen.ecommercebackend.cart.entity.Cart;
 import com.thanhnguyen.ecommercebackend.cart.entity.CartItem;
 import com.thanhnguyen.ecommercebackend.cart.exception.CartItemNotFoundException;
+import com.thanhnguyen.ecommercebackend.cart.exception.CartOwnershipException;
 import com.thanhnguyen.ecommercebackend.cart.repository.CartItemRepository;
 import com.thanhnguyen.ecommercebackend.cart.repository.CartRepository;
 import com.thanhnguyen.ecommercebackend.product.dto.ProductResponse;
@@ -61,22 +62,19 @@ public class CartServiceImpl implements CartService {
     @Override
     @Transactional
     public CartResponse updateItem(User currentUser, Long itemId, UpdateCartItemRequest request) {
-        Cart cart = resolveCart(currentUser, itemId);
-        CartItem item = cartItemRepository.findByIdAndCartId(itemId, cart.getId())
-                .orElseThrow(() -> new CartItemNotFoundException(itemId));
+        CartItem item = resolveOwnedItem(currentUser, itemId);
 
         item.setQuantity(request.getQuantity());
         cartItemRepository.save(item);
 
-        return toResponse(cart);
+        return toResponse(item.getCart());
     }
 
     @Override
     @Transactional
     public CartResponse removeItem(User currentUser, Long itemId) {
-        Cart cart = resolveCart(currentUser, itemId);
-        CartItem item = cartItemRepository.findByIdAndCartId(itemId, cart.getId())
-                .orElseThrow(() -> new CartItemNotFoundException(itemId));
+        CartItem item = resolveOwnedItem(currentUser, itemId);
+        Cart cart = item.getCart();
 
         cartItemRepository.delete(item);
 
@@ -96,9 +94,17 @@ public class CartServiceImpl implements CartService {
         return response;
     }
 
-    private Cart resolveCart(User currentUser, Long itemId) {
-        return cartRepository.findByUserId(currentUser.getId())
+    // Tach 2 truong hop de tra dung status code (design doc Flow 6): item khong ton tai -> 404;
+    // item ton tai nhung thuoc cart nguoi khac -> 403 (thong nhat voi Product/Order ownership).
+    private CartItem resolveOwnedItem(User currentUser, Long itemId) {
+        CartItem item = cartItemRepository.findById(itemId)
                 .orElseThrow(() -> new CartItemNotFoundException(itemId));
+
+        Cart cart = cartRepository.findByUserId(currentUser.getId()).orElse(null);
+        if (cart == null || !item.getCart().getId().equals(cart.getId())) {
+            throw new CartOwnershipException();
+        }
+        return item;
     }
 
     private Cart createCart(User user) {

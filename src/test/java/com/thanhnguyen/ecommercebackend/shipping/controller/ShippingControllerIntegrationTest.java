@@ -264,8 +264,8 @@ class ShippingControllerIntegrationTest {
         mockMvc.perform(get("/api/shipper/deliveries")
                         .header("Authorization", "Bearer " + shipperToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(1)))
-                .andExpect(jsonPath("$.data[0].orderId", is(orderId.intValue())));
+                .andExpect(jsonPath("$.data.content.length()", is(1)))
+                .andExpect(jsonPath("$.data.content[0].orderId", is(orderId.intValue())));
     }
 
     @Test
@@ -303,7 +303,7 @@ class ShippingControllerIntegrationTest {
         mockMvc.perform(get("/api/shipper/deliveries")
                         .header("Authorization", "Bearer " + shipperToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(0)));
+                .andExpect(jsonPath("$.data.content.length()", is(0)));
     }
 
     @Test
@@ -471,13 +471,13 @@ class ShippingControllerIntegrationTest {
         mockMvc.perform(get("/api/shipper/deliveries")
                         .header("Authorization", "Bearer " + oldShipperToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(0)));
+                .andExpect(jsonPath("$.data.content.length()", is(0)));
         mockMvc.perform(get("/api/shipper/deliveries")
                         .header("Authorization", "Bearer " + newShipperToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(1)))
-                .andExpect(jsonPath("$.data[0].orderId", is(orderId.intValue())))
-                .andExpect(jsonPath("$.data[0].status", is("ASSIGNED")));
+                .andExpect(jsonPath("$.data.content.length()", is(1)))
+                .andExpect(jsonPath("$.data.content[0].orderId", is(orderId.intValue())))
+                .andExpect(jsonPath("$.data.content[0].status", is("ASSIGNED")));
     }
 
     @Test
@@ -507,7 +507,7 @@ class ShippingControllerIntegrationTest {
         mockMvc.perform(get("/api/shipper/deliveries")
                         .header("Authorization", "Bearer " + shipperToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].status", is("DELIVERED")));
+                .andExpect(jsonPath("$.data.content[0].status", is("DELIVERED")));
     }
 
     @Test
@@ -560,7 +560,7 @@ class ShippingControllerIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new AssignShipperRequest(plainCustomer.getId()))))
-                .andExpect(status().isConflict())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code", is("NOT_A_SHIPPER")));
     }
 }

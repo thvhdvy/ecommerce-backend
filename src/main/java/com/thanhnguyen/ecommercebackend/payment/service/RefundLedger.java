@@ -1,5 +1,7 @@
 package com.thanhnguyen.ecommercebackend.payment.service;
 
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Page;
 import com.thanhnguyen.ecommercebackend.payment.entity.Payment;
 import com.thanhnguyen.ecommercebackend.payment.entity.PaymentStatus;
 import com.thanhnguyen.ecommercebackend.payment.entity.Refund;
@@ -76,8 +78,8 @@ class RefundLedger {
 
     // Chi doc + ghi DB, khong goi mang -> khong can REQUIRES_NEW, transaction thuong cua request la du.
     @Transactional
-    List<Refund> listFailedRefunds() {
-        return refundRepository.findByStatus(RefundStatus.REFUND_FAILED);
+    Page<Refund> listFailedRefunds(Pageable pageable) {
+        return refundRepository.findByStatus(RefundStatus.REFUND_FAILED, pageable);
     }
 
     // Admin xac nhan da hoan tien cho khach bang kenh khac (chuyen khoan tay...) sau khi VNPay tu choi

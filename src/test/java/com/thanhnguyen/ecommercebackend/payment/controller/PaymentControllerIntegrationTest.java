@@ -324,7 +324,39 @@ class PaymentControllerIntegrationTest {
         mockMvc.perform(get("/api/admin/payments/amount-mismatches")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[?(@.vnpTransactionNo == 'IPN-MISMATCH-1')]").isNotEmpty());
+                .andExpect(jsonPath("$.data.content[?(@.vnpTransactionNo == 'IPN-MISMATCH-1')]").isNotEmpty());
+    }
+
+    @Test
+    void validIpn_shouldStillConfirm_afterAmountMismatchWithSameTransactionNo() throws Exception {
+        Long productId = createProductWithStock("intent7", new BigDecimal("10.00"), 10);
+        String customerToken = registerAndLogin("payment-customer7@example.com", UserRole.CUSTOMER);
+        Long orderId = checkoutOrder(customerToken, productId, 1); // total = 10.00
+
+        MvcResult intentResult = mockMvc.perform(post("/api/payments/" + orderId + "/intent")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        String txnRef = extractTxnRef(objectMapper.readTree(intentResult.getResponse().getContentAsString())
+                .get("data").get("paymentUrl").asText());
+
+        // Lan 1: amount lech -> tu choi, ghi AMOUNT_MISMATCH voi transaction no nay
+        mockMvc.perform(get("/api/payments/vnpay-ipn?"
+                        + buildSignedIpnQuery(txnRef, "IPN-MISMATCH-2", "00", "500")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.RspCode", is("04")));
+
+        // Lan 2: IPN hop le, CUNG transaction no — truoc V19 se bi record AMOUNT_MISMATCH "chiem cho"
+        // idempotency key va bi coi la da xu ly (payment ket PENDING vinh vien); sau V19 phai confirm.
+        mockMvc.perform(get("/api/payments/vnpay-ipn?"
+                        + buildSignedIpnQuery(txnRef, "IPN-MISMATCH-2", "00", "1000")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.RspCode", is("00")));
+
+        mockMvc.perform(get("/api/orders/" + orderId)
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("CONFIRMED")));
     }
 
     @Test

@@ -1,16 +1,20 @@
 package com.thanhnguyen.ecommercebackend.user.service;
 
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.user.dto.BecomeSellerRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.SellerResponse;
 import com.thanhnguyen.ecommercebackend.user.entity.Seller;
 import com.thanhnguyen.ecommercebackend.user.entity.SellerStatus;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.entity.UserRole;
+import com.thanhnguyen.ecommercebackend.user.exception.NotASellerException;
 import com.thanhnguyen.ecommercebackend.user.exception.NotEligibleForSellerException;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerAlreadyExistsException;
+import com.thanhnguyen.ecommercebackend.user.exception.SellerLockedException;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerNotFoundException;
 import com.thanhnguyen.ecommercebackend.user.repository.SellerRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,8 +50,19 @@ public class SellerServiceImpl implements SellerService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<SellerResponse> listAll() {
-        return sellerRepository.findAll().stream().map(this::toResponse).toList();
+    public Seller requireActiveSeller(Long userId) {
+        Seller seller = sellerRepository.findByUserId(userId)
+                .orElseThrow(NotASellerException::new);
+        if (seller.getStatus() == SellerStatus.LOCKED) {
+            throw new SellerLockedException();
+        }
+        return seller;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<SellerResponse> listAll(Pageable pageable) {
+        return PageResponse.from(sellerRepository.findAll(pageable).map(this::toResponse));
     }
 
     @Override

@@ -16,6 +16,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -123,11 +127,13 @@ class RefundLedgerTest {
     @Test
     void listFailedRefunds_shouldDelegateToRepository() {
         Refund refund = new Refund(new Payment(10L, "10-999", new BigDecimal("45.00")), 10L, new BigDecimal("45.00"), "reason");
-        when(refundRepository.findByStatus(RefundStatus.REFUND_FAILED)).thenReturn(List.of(refund));
+        Pageable pageable = PageRequest.of(0, 20);
+        when(refundRepository.findByStatus(RefundStatus.REFUND_FAILED, pageable))
+                .thenReturn(new PageImpl<>(List.of(refund)));
 
-        List<Refund> result = refundLedger.listFailedRefunds();
+        Page<Refund> result = refundLedger.listFailedRefunds(pageable);
 
-        assertThat(result).containsExactly(refund);
+        assertThat(result.getContent()).containsExactly(refund);
     }
 
     @Test

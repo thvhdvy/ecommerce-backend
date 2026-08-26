@@ -200,12 +200,14 @@ class CartControllerIntegrationTest {
         Long itemId = objectMapper.readTree(addResult.getResponse().getContentAsString())
                 .get("data").get("items").get(0).get("id").asLong();
 
+        // Item ton tai nhung thuoc cart nguoi khac -> 403 ownership (thong nhat voi Product/Order,
+        // design doc Flow 6), khong con 404 nhu truoc
         mockMvc.perform(patch("/api/cart/items/" + itemId)
                         .header("Authorization", "Bearer " + otherToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new UpdateCartItemRequest(2))))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error.code", is("CART_ITEM_NOT_FOUND")));
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code", is("CART_OWNERSHIP_VIOLATION")));
     }
 
     @Test

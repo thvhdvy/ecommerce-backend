@@ -1,5 +1,6 @@
 package com.thanhnguyen.ecommercebackend.user.service;
 
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.user.dto.RegisterRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.UpdateProfileRequest;
 import com.thanhnguyen.ecommercebackend.user.dto.UserResponse;
@@ -12,6 +13,7 @@ import com.thanhnguyen.ecommercebackend.user.exception.UserNotFoundException;
 import com.thanhnguyen.ecommercebackend.user.repository.RefreshTokenRepository;
 import com.thanhnguyen.ecommercebackend.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,6 +57,13 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public User getEntityById(Long userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException(userId));
+    }
+
+    @Override
     @Transactional
     public UserResponse updateProfile(Long userId, UpdateProfileRequest request) {
         User user = userRepository.findById(userId)
@@ -73,8 +82,8 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<UserResponse> listAll() {
-        return userRepository.findAll().stream().map(this::toResponse).toList();
+    public PageResponse<UserResponse> listAll(Pageable pageable) {
+        return PageResponse.from(userRepository.findAll(pageable).map(this::toResponse));
     }
 
     @Override

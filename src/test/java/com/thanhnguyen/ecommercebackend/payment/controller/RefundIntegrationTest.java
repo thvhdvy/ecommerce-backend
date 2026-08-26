@@ -286,7 +286,7 @@ class RefundIntegrationTest {
         mockMvc.perform(get("/api/admin/refunds/failed")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[?(@.orderId == " + orderId + ")].status", is(java.util.List.of("REFUND_FAILED"))));
+                .andExpect(jsonPath("$.data.content[?(@.orderId == " + orderId + ")].status", is(java.util.List.of("REFUND_FAILED"))));
     }
 
     @Test
@@ -308,7 +308,7 @@ class RefundIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andReturn();
-        JsonNode refunds = objectMapper.readTree(listResult.getResponse().getContentAsString()).get("data");
+        JsonNode refunds = objectMapper.readTree(listResult.getResponse().getContentAsString()).get("data").get("content");
         long refundId = -1;
         for (JsonNode node : refunds) {
             if (node.get("orderId").asLong() == orderId) {
@@ -325,7 +325,7 @@ class RefundIntegrationTest {
         mockMvc.perform(get("/api/admin/refunds/failed")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[?(@.orderId == " + orderId + ")]").isEmpty());
+                .andExpect(jsonPath("$.data.content[?(@.orderId == " + orderId + ")]").isEmpty());
 
         // Da resolve roi thi khong duoc resolve lai lan nua
         mockMvc.perform(patch("/api/admin/refunds/" + refundId + "/resolve")
@@ -354,7 +354,7 @@ class RefundIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andReturn();
-        JsonNode refunds = objectMapper.readTree(listResult.getResponse().getContentAsString()).get("data");
+        JsonNode refunds = objectMapper.readTree(listResult.getResponse().getContentAsString()).get("data").get("content");
         long refundId = -1;
         for (JsonNode node : refunds) {
             if (node.get("orderId").asLong() == orderId) {

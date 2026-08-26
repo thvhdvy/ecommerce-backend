@@ -1,5 +1,7 @@
 package com.thanhnguyen.ecommercebackend.shipping.service;
 
+import org.springframework.data.domain.Pageable;
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderResponse;
 import com.thanhnguyen.ecommercebackend.order.entity.OrderStatus;
 import com.thanhnguyen.ecommercebackend.order.service.OrderService;
@@ -16,8 +18,7 @@ import com.thanhnguyen.ecommercebackend.shipping.repository.DeliveryRepository;
 import com.thanhnguyen.ecommercebackend.shipping.repository.DeliveryStatusHistoryRepository;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.entity.UserRole;
-import com.thanhnguyen.ecommercebackend.user.exception.UserNotFoundException;
-import com.thanhnguyen.ecommercebackend.user.repository.UserRepository;
+import com.thanhnguyen.ecommercebackend.user.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,7 +37,7 @@ public class ShippingServiceImpl implements ShippingService {
 
     private final DeliveryRepository deliveryRepository;
     private final DeliveryStatusHistoryRepository deliveryStatusHistoryRepository;
-    private final UserRepository userRepository;
+    private final UserService userService;
     private final OrderService orderService;
 
     @Override
@@ -48,8 +49,9 @@ public class ShippingServiceImpl implements ShippingService {
                     "Order must be PACKED or SHIPPED to assign a shipper, current status: " + order.getStatus());
         }
 
-        User shipper = userRepository.findById(shipperId)
-                .orElseThrow(() -> new UserNotFoundException(shipperId));
+        // Lookup qua UserService (khong query UserRepository truc tiep — module boundary);
+        // rule "phai la SHIPPER" la nghiep vu shipping nen check tai day.
+        User shipper = userService.getEntityById(shipperId);
         if (shipper.getRole() != UserRole.SHIPPER) {
             throw new NotAShipperException();
         }
@@ -75,10 +77,9 @@ public class ShippingServiceImpl implements ShippingService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<DeliveryResponse> listMyDeliveries(User currentUser) {
-        return deliveryRepository.findAllByShipperIdOrderByCreatedAtDesc(currentUser.getId()).stream()
-                .map(this::toResponse)
-                .toList();
+    public PageResponse<DeliveryResponse> listMyDeliveries(User currentUser, Pageable pageable) {
+        return PageResponse.from(
+                deliveryRepository.findAllByShipperId(currentUser.getId(), pageable).map(this::toResponse));
     }
 
     @Override

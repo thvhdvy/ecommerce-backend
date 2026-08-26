@@ -1,5 +1,11 @@
 package com.thanhnguyen.ecommercebackend.shipping.controller;
 
+import java.util.Set;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Pageable;
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
+import com.thanhnguyen.ecommercebackend.common.PageRequests;
 import com.thanhnguyen.ecommercebackend.common.ApiResponse;
 import com.thanhnguyen.ecommercebackend.shipping.dto.DeliveryResponse;
 import com.thanhnguyen.ecommercebackend.shipping.dto.DeliveryStatusUpdateRequest;
@@ -17,7 +23,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/shipper/deliveries")
@@ -27,9 +32,14 @@ public class ShipperDeliveryController {
 
     private final ShippingService shippingService;
 
+    private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt");
+
     @GetMapping
-    public ResponseEntity<ApiResponse<List<DeliveryResponse>>> listMyDeliveries(@AuthenticationPrincipal User currentUser) {
-        return ResponseEntity.ok(ApiResponse.success(shippingService.listMyDeliveries(currentUser)));
+    public ResponseEntity<ApiResponse<PageResponse<DeliveryResponse>>> listMyDeliveries(
+            @AuthenticationPrincipal User currentUser,
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.success(
+                shippingService.listMyDeliveries(currentUser, PageRequests.capped(pageable, SORTABLE_FIELDS))));
     }
 
     @PatchMapping("/{deliveryId}/status")

@@ -18,7 +18,6 @@ import com.thanhnguyen.ecommercebackend.product.entity.ProductImage;
 import com.thanhnguyen.ecommercebackend.product.exception.BrandNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.CategoryNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.MultiplePrimaryImagesException;
-import com.thanhnguyen.ecommercebackend.product.exception.NotASellerException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductOwnershipException;
 import com.thanhnguyen.ecommercebackend.product.entity.ProductStatus;
@@ -27,10 +26,8 @@ import com.thanhnguyen.ecommercebackend.product.repository.CategoryRepository;
 import com.thanhnguyen.ecommercebackend.product.repository.ProductRepository;
 import com.thanhnguyen.ecommercebackend.product.specification.ProductSpecifications;
 import com.thanhnguyen.ecommercebackend.user.entity.Seller;
-import com.thanhnguyen.ecommercebackend.user.entity.SellerStatus;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
-import com.thanhnguyen.ecommercebackend.user.exception.SellerLockedException;
-import com.thanhnguyen.ecommercebackend.user.repository.SellerRepository;
+import com.thanhnguyen.ecommercebackend.user.service.SellerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -42,6 +39,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Service
@@ -49,7 +47,7 @@ import java.util.stream.Collectors;
 public class ProductServiceImpl implements ProductService {
 
     private final ProductRepository productRepository;
-    private final SellerRepository sellerRepository;
+    private final SellerService sellerService;
     private final CategoryRepository categoryRepository;
     private final BrandRepository brandRepository;
     private final InventoryService inventoryService;
@@ -57,7 +55,7 @@ public class ProductServiceImpl implements ProductService {
     @Override
     @Transactional
     public ProductResponse create(User currentUser, ProductCreateRequest request) {
-        Seller seller = resolveSeller(currentUser);
+        Seller seller = sellerService.requireActiveSeller(currentUser.getId());
 
         Product product = new Product();
         product.setSeller(seller);
@@ -158,16 +156,25 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    @Transactional
-    public void recalculateRating(Long productId, BigDecimal ratingAvg) {
-        Product product = productRepository.findById(productId)
+    @Transactional(readOnly = true)
+    public Product getEntityById(Long productId) {
+        return productRepository.findById(productId)
                 .orElseThrow(() -> new ProductNotFoundException(productId));
-        product.setRatingAvg(ratingAvg);
+    }
+
+    @Override
+    @Transactional
+    public void recalculateRating(Long productId, Supplier<BigDecimal> ratingAvgSupplier) {
+        // Khoa row TRUOC khi goi supplier doc AVG (xem javadoc o ProductService) — serialize
+        // 2 lan recalculate dong thoi, chong lost-update giua doc va ghi.
+        Product product = productRepository.findByIdForRatingUpdate(productId)
+                .orElseThrow(() -> new ProductNotFoundException(productId));
+        product.setRatingAvg(ratingAvgSupplier.get());
         productRepository.save(product);
     }
 
     private Product findOwnedProduct(User currentUser, Long productId) {
-        Seller seller = resolveSeller(currentUser);
+        Seller seller = sellerService.requireActiveSeller(currentUser.getId());
 
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new ProductNotFoundException(productId));
@@ -177,15 +184,6 @@ public class ProductServiceImpl implements ProductService {
         }
 
         return product;
-    }
-
-    private Seller resolveSeller(User currentUser) {
-        Seller seller = sellerRepository.findByUserId(currentUser.getId())
-                .orElseThrow(NotASellerException::new);
-        if (seller.getStatus() == SellerStatus.LOCKED) {
-            throw new SellerLockedException();
-        }
-        return seller;
     }
 
     private Category resolveCategory(Long categoryId) {

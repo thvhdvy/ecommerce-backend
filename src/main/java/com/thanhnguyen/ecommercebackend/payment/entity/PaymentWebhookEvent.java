@@ -20,7 +20,10 @@ public class PaymentWebhookEvent {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "vnp_transaction_no", nullable = false, unique = true)
+    // Khong unique=true don cot nua: idempotency scope theo 2 partial unique index trong V19
+    // (nhom PAYMENT_RESULT/QUERY_RECONCILE chung barrier; AMOUNT_MISMATCH dedupe rieng) —
+    // partial index khong bieu dien duoc bang JPA annotation, schema do Flyway so huu.
+    @Column(name = "vnp_transaction_no", nullable = false)
     private String vnpTransactionNo;
 
     @Column(name = "event_type", nullable = false)
