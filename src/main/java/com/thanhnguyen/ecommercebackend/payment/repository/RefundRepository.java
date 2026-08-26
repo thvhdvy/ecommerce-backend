@@ -9,10 +9,13 @@ import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.util.Collection;
+import java.util.List;
 
 @Repository
 public interface RefundRepository extends JpaRepository<Refund, Long> {
     @Query("SELECT COALESCE(SUM(r.amount), 0) FROM Refund r WHERE r.payment.id = :paymentId AND r.status IN :statuses")
     BigDecimal sumAmountByPaymentIdAndStatusIn(
             @Param("paymentId") Long paymentId, @Param("statuses") Collection<RefundStatus> statuses);
+
+    List<Refund> findByStatus(RefundStatus status);
 }

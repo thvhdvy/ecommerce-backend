@@ -31,4 +31,10 @@ public class AdminShippingController {
         return ResponseEntity.ok(ApiResponse.success(
                 shippingService.assignShipper(id, request.getShipperId(), currentUser)));
     }
+
+    @PatchMapping("/{id}/confirm-delivery")
+    public ResponseEntity<ApiResponse<DeliveryResponse>> confirmDelivery(
+            @AuthenticationPrincipal User currentUser, @PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success(shippingService.confirmDeliveredManually(currentUser, id)));
+    }
 }

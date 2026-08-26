@@ -295,4 +295,44 @@ class PaymentControllerIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code", is("ORDER_OWNERSHIP_VIOLATION")));
     }
+
+    @Test
+    void amountMismatchIpn_shouldBeRejected_andListedForAdmin() throws Exception {
+        Long productId = createProductWithStock("intent5", new BigDecimal("10.00"), 10);
+        String customerToken = registerAndLogin("payment-customer5@example.com", UserRole.CUSTOMER);
+        Long orderId = checkoutOrder(customerToken, productId, 1); // total = 10.00
+
+        MvcResult intentResult = mockMvc.perform(post("/api/payments/" + orderId + "/intent")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        String txnRef = extractTxnRef(objectMapper.readTree(intentResult.getResponse().getContentAsString())
+                .get("data").get("paymentUrl").asText());
+
+        // VNPay bao ve 5.00 trong khi order can 10.00 — chu ky van hop le (chi so tien lech)
+        String ipnQuery = buildSignedIpnQuery(txnRef, "IPN-MISMATCH-1", "00", "500");
+        mockMvc.perform(get("/api/payments/vnpay-ipn?" + ipnQuery))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.RspCode", is("04")));
+
+        mockMvc.perform(get("/api/orders/" + orderId)
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("PENDING_PAYMENT")));
+
+        String adminToken = registerAndLogin("payment-admin-mismatch1@example.com", UserRole.ADMIN);
+        mockMvc.perform(get("/api/admin/payments/amount-mismatches")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.vnpTransactionNo == 'IPN-MISMATCH-1')]").isNotEmpty());
+    }
+
+    @Test
+    void amountMismatches_shouldReturn403_forNonAdmin() throws Exception {
+        String customerToken = registerAndLogin("payment-customer6@example.com", UserRole.CUSTOMER);
+
+        mockMvc.perform(get("/api/admin/payments/amount-mismatches")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isForbidden());
+    }
 }

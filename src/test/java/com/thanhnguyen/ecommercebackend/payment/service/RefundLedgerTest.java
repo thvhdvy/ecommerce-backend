@@ -6,6 +6,7 @@ import com.thanhnguyen.ecommercebackend.payment.entity.Refund;
 import com.thanhnguyen.ecommercebackend.payment.entity.RefundStatus;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotFoundException;
 import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotAllowedException;
+import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotFoundException;
 import com.thanhnguyen.ecommercebackend.payment.repository.PaymentRepository;
 import com.thanhnguyen.ecommercebackend.payment.repository.RefundRepository;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayRefundResult;
@@ -17,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -116,5 +118,46 @@ class RefundLedgerTest {
         refundLedger.finalizeResult(7L, 10L, VnpayRefundResult.failure("91"));
 
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REFUND_FAILED);
+    }
+
+    @Test
+    void listFailedRefunds_shouldDelegateToRepository() {
+        Refund refund = new Refund(new Payment(10L, "10-999", new BigDecimal("45.00")), 10L, new BigDecimal("45.00"), "reason");
+        when(refundRepository.findByStatus(RefundStatus.REFUND_FAILED)).thenReturn(List.of(refund));
+
+        List<Refund> result = refundLedger.listFailedRefunds();
+
+        assertThat(result).containsExactly(refund);
+    }
+
+    @Test
+    void manuallyResolve_shouldThrow_whenRefundNotFound() {
+        when(refundRepository.findById(7L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> refundLedger.manuallyResolve(7L, "note"))
+                .isInstanceOf(RefundNotFoundException.class);
+    }
+
+    @Test
+    void manuallyResolve_shouldThrow_whenRefundNotFailed() {
+        Refund refund = new Refund(new Payment(10L, "10-999", new BigDecimal("45.00")), 10L, new BigDecimal("45.00"), "reason");
+        refund.setStatus(RefundStatus.REFUNDED);
+        when(refundRepository.findById(7L)).thenReturn(Optional.of(refund));
+
+        assertThatThrownBy(() -> refundLedger.manuallyResolve(7L, "note"))
+                .isInstanceOf(RefundNotAllowedException.class);
+    }
+
+    @Test
+    void manuallyResolve_shouldMarkResolved_whenRefundFailed() {
+        Refund refund = new Refund(new Payment(10L, "10-999", new BigDecimal("45.00")), 10L, new BigDecimal("45.00"), "reason");
+        refund.setStatus(RefundStatus.REFUND_FAILED);
+        when(refundRepository.findById(7L)).thenReturn(Optional.of(refund));
+        when(refundRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        refundLedger.manuallyResolve(7L, "Hoan tien tay qua chuyen khoan");
+
+        assertThat(refund.getStatus()).isEqualTo(RefundStatus.REFUND_MANUALLY_RESOLVED);
+        assertThat(refund.getResolutionNote()).isEqualTo("Hoan tien tay qua chuyen khoan");
     }
 }

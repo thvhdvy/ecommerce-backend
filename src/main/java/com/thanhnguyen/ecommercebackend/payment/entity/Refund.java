@@ -13,6 +13,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -48,11 +49,17 @@ public class Refund {
     @Column
     private String reason;
 
+    @Column(name = "resolution_note")
+    private String resolutionNote;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
     @Column(nullable = false)
     private LocalDateTime updatedAt;
+
+    @Version
+    private Long version;
 
     public Refund(Payment payment, Long orderId, BigDecimal amount, String reason) {
         this.payment = payment;

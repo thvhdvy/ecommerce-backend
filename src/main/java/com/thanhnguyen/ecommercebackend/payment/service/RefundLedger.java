@@ -6,6 +6,7 @@ import com.thanhnguyen.ecommercebackend.payment.entity.Refund;
 import com.thanhnguyen.ecommercebackend.payment.entity.RefundStatus;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotFoundException;
 import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotAllowedException;
+import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotFoundException;
 import com.thanhnguyen.ecommercebackend.payment.repository.PaymentRepository;
 import com.thanhnguyen.ecommercebackend.payment.repository.RefundRepository;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayRefundResult;
@@ -46,7 +47,8 @@ class RefundLedger {
         }
 
         BigDecimal alreadyRefunded = refundRepository.sumAmountByPaymentIdAndStatusIn(
-                payment.getId(), List.of(RefundStatus.REFUND_PENDING, RefundStatus.REFUNDED));
+                payment.getId(), List.of(
+                        RefundStatus.REFUND_PENDING, RefundStatus.REFUNDED, RefundStatus.REFUND_MANUALLY_RESOLVED));
         BigDecimal remaining = payment.getAmount().subtract(alreadyRefunded);
         if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
             throw new RefundNotAllowedException("Payment for order " + orderId + " already fully refunded");
@@ -69,6 +71,29 @@ class RefundLedger {
             refund.setStatus(RefundStatus.REFUND_FAILED);
             log.error("VNPay refund failed for order {}: responseCode={}", orderId, result.responseCode());
         }
+        refundRepository.save(refund);
+    }
+
+    // Chi doc + ghi DB, khong goi mang -> khong can REQUIRES_NEW, transaction thuong cua request la du.
+    @Transactional
+    List<Refund> listFailedRefunds() {
+        return refundRepository.findByStatus(RefundStatus.REFUND_FAILED);
+    }
+
+    // Admin xac nhan da hoan tien cho khach bang kenh khac (chuyen khoan tay...) sau khi VNPay tu choi
+    // vinh vien (vd qua han hoan tien) - khong goi lai VNPay, chi ghi nhan lai trong he thong.
+    @Transactional
+    void manuallyResolve(Long refundId, String note) {
+        Refund refund = refundRepository.findById(refundId)
+                .orElseThrow(() -> new RefundNotFoundException(refundId));
+
+        if (refund.getStatus() != RefundStatus.REFUND_FAILED) {
+            throw new RefundNotAllowedException(
+                    "Refund " + refundId + " is not in REFUND_FAILED status, cannot mark resolved manually");
+        }
+
+        refund.setStatus(RefundStatus.REFUND_MANUALLY_RESOLVED);
+        refund.setResolutionNote(note);
         refundRepository.save(refund);
     }
 

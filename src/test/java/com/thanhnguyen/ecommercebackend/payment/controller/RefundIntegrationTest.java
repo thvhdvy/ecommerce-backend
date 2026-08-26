@@ -267,4 +267,120 @@ class RefundIntegrationTest {
                 anyString(), any(), any(LocalDateTime.class), org.mockito.ArgumentMatchers.eq(new BigDecimal("15.00")),
                 anyString(), anyString());
     }
+
+    @Test
+    void adminListFailedRefunds_shouldIncludeRefund_whenVnpayRefundFails() throws Exception {
+        doReturn(VnpayRefundResult.failure("91"))
+                .when(vnpayClient)
+                .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
+
+        Long productId = createProductWithStock("failed1", new BigDecimal("12.00"), 5);
+        String customerToken = registerAndLogin("refund-customer4@example.com", UserRole.CUSTOMER);
+        Long orderId = confirmOrderViaVnpay(customerToken, productId, 1, "1200");
+
+        mockMvc.perform(post("/api/orders/" + orderId + "/cancel")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk());
+
+        String adminToken = registerAndLogin("refund-admin-list1@example.com", UserRole.ADMIN);
+        mockMvc.perform(get("/api/admin/refunds/failed")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.orderId == " + orderId + ")].status", is(java.util.List.of("REFUND_FAILED"))));
+    }
+
+    @Test
+    void adminResolveRefundManually_shouldMarkResolved_andRemoveFromFailedList() throws Exception {
+        doReturn(VnpayRefundResult.failure("91"))
+                .when(vnpayClient)
+                .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
+
+        Long productId = createProductWithStock("failed2", new BigDecimal("18.00"), 5);
+        String customerToken = registerAndLogin("refund-customer5@example.com", UserRole.CUSTOMER);
+        Long orderId = confirmOrderViaVnpay(customerToken, productId, 1, "1800");
+
+        mockMvc.perform(post("/api/orders/" + orderId + "/cancel")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk());
+
+        String adminToken = registerAndLogin("refund-admin-resolve1@example.com", UserRole.ADMIN);
+        MvcResult listResult = mockMvc.perform(get("/api/admin/refunds/failed")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode refunds = objectMapper.readTree(listResult.getResponse().getContentAsString()).get("data");
+        long refundId = -1;
+        for (JsonNode node : refunds) {
+            if (node.get("orderId").asLong() == orderId) {
+                refundId = node.get("id").asLong();
+            }
+        }
+
+        mockMvc.perform(patch("/api/admin/refunds/" + refundId + "/resolve")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"note\":\"Hoan tien tay qua chuyen khoan ngan hang\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/admin/refunds/failed")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.orderId == " + orderId + ")]").isEmpty());
+
+        // Da resolve roi thi khong duoc resolve lai lan nua
+        mockMvc.perform(patch("/api/admin/refunds/" + refundId + "/resolve")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"note\":\"resolve lan 2\"}"))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void adminResolveRefundManually_shouldReject_whenNoteBlank() throws Exception {
+        doReturn(VnpayRefundResult.failure("91"))
+                .when(vnpayClient)
+                .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
+
+        Long productId = createProductWithStock("failed3", new BigDecimal("9.00"), 5);
+        String customerToken = registerAndLogin("refund-customer6@example.com", UserRole.CUSTOMER);
+        Long orderId = confirmOrderViaVnpay(customerToken, productId, 1, "900");
+
+        mockMvc.perform(post("/api/orders/" + orderId + "/cancel")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk());
+
+        String adminToken = registerAndLogin("refund-admin-blank1@example.com", UserRole.ADMIN);
+        MvcResult listResult = mockMvc.perform(get("/api/admin/refunds/failed")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode refunds = objectMapper.readTree(listResult.getResponse().getContentAsString()).get("data");
+        long refundId = -1;
+        for (JsonNode node : refunds) {
+            if (node.get("orderId").asLong() == orderId) {
+                refundId = node.get("id").asLong();
+            }
+        }
+
+        mockMvc.perform(patch("/api/admin/refunds/" + refundId + "/resolve")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"note\":\"\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void adminRefundEndpoints_shouldReturn403_forNonAdmin() throws Exception {
+        String customerToken = registerAndLogin("refund-customer7@example.com", UserRole.CUSTOMER);
+
+        mockMvc.perform(get("/api/admin/refunds/failed")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(patch("/api/admin/refunds/1/resolve")
+                        .header("Authorization", "Bearer " + customerToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"note\":\"anything\"}"))
+                .andExpect(status().isForbidden());
+    }
 }

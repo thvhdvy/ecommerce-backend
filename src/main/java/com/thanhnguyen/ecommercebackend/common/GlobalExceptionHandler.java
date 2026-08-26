@@ -12,6 +12,7 @@ import com.thanhnguyen.ecommercebackend.order.exception.OrderOwnershipException;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotAllowedException;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotFoundException;
 import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotAllowedException;
+import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.BrandNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.CategoryNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.InvalidSortFieldException;
@@ -210,6 +211,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleRefundNotAllowed(RefundNotAllowedException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("REFUND_NOT_ALLOWED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(RefundNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleRefundNotFound(RefundNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("REFUND_NOT_FOUND", ex.getMessage()));
     }
 
     @ExceptionHandler(MultiplePrimaryImagesException.class)

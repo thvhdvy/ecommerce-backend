@@ -4,6 +4,8 @@
 
 Backend e-commerce viết bằng Java/Spring Boot. Schema, state machine, API contract, business rule — chi tiết đầy đủ nằm ở [`ecommerce-backend-design.md`](ecommerce-backend-design.md), README chỉ tóm tắt điều hướng.
 
+Bằng chứng đo `EXPLAIN ANALYZE` cho các index đã thêm (Phase 5): [`docs/query-optimization.md`](docs/query-optimization.md).
+
 ## Kiến trúc
 
 **Modular Monolith** — package theo feature, không theo layer ở top level:
@@ -56,7 +58,7 @@ App chạy ở `http://localhost:8080`, Postgres expose ở `5432`. Migration Fl
 ./mvnw test
 ```
 
-Cần Docker đang chạy (integration test dùng Testcontainers, khởi tạo PostgreSQL thật thay vì mock/H2). Hiện tại: **120 test** (unit + integration), viết song song với từng phase, không dồn cuối.
+Cần Docker đang chạy (integration test dùng Testcontainers, khởi tạo PostgreSQL thật thay vì mock/H2). Hiện tại: **176 test** (unit + integration), viết song song với từng phase, không dồn cuối.
 
 ## API docs
 

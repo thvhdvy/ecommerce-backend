@@ -3,10 +3,14 @@ package com.thanhnguyen.ecommercebackend.payment.service;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderResponse;
 import com.thanhnguyen.ecommercebackend.order.entity.OrderStatus;
 import com.thanhnguyen.ecommercebackend.order.service.OrderService;
+import com.thanhnguyen.ecommercebackend.payment.dto.PaymentDisputeResponse;
 import com.thanhnguyen.ecommercebackend.payment.dto.PaymentIntentResponse;
 import com.thanhnguyen.ecommercebackend.payment.dto.PaymentStatusResponse;
+import com.thanhnguyen.ecommercebackend.payment.dto.RefundResponse;
 import com.thanhnguyen.ecommercebackend.payment.entity.Payment;
 import com.thanhnguyen.ecommercebackend.payment.entity.PaymentStatus;
+import com.thanhnguyen.ecommercebackend.payment.entity.PaymentWebhookEvent;
+import com.thanhnguyen.ecommercebackend.payment.entity.Refund;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotAllowedException;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotFoundException;
 import com.thanhnguyen.ecommercebackend.payment.repository.PaymentRepository;
@@ -22,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -139,6 +144,10 @@ public class PaymentServiceImpl implements PaymentService {
         if (payment.getAmount().compareTo(ipnAmount) != 0) {
             log.warn("VNPay IPN amount mismatch for txnRef={}: expected={}, got={}",
                     txnRef, payment.getAmount(), ipnAmount);
+            // Ghi nhan de admin tra cuu (Flow 10 - dispute) - khong tu doi PaymentStatus/OrderStatus,
+            // chi/danh dau de dieu tra thu cong, tranh dung vao payment state machine dang chay on dinh
+            // cho 1 case hiem (chu ky HMAC da hop le, chi lech so tien).
+            webhookEventRepository.insertIfAbsent(transactionNo, "AMOUNT_MISMATCH", params.toString());
             return ipnResponse("04", "Invalid amount");
         }
 
@@ -191,6 +200,35 @@ public class PaymentServiceImpl implements PaymentService {
                 initiation.amount(), reason, clientIp);
 
         refundLedger.finalizeResult(initiation.refundId(), orderId, result);
+    }
+
+    @Override
+    public List<RefundResponse> listFailedRefunds() {
+        return refundLedger.listFailedRefunds().stream().map(this::toRefundResponse).toList();
+    }
+
+    @Override
+    public void resolveRefundManually(Long refundId, String note) {
+        refundLedger.manuallyResolve(refundId, note);
+    }
+
+    @Override
+    public List<PaymentDisputeResponse> listAmountMismatches() {
+        return webhookEventRepository.findByEventTypeOrderByProcessedAtDesc("AMOUNT_MISMATCH").stream()
+                .map(this::toDisputeResponse)
+                .toList();
+    }
+
+    private PaymentDisputeResponse toDisputeResponse(PaymentWebhookEvent event) {
+        return new PaymentDisputeResponse(
+                event.getId(), event.getVnpTransactionNo(), event.getEventType(),
+                event.getPayload(), event.getProcessedAt());
+    }
+
+    private RefundResponse toRefundResponse(Refund refund) {
+        return new RefundResponse(
+                refund.getId(), refund.getOrderId(), refund.getAmount(), refund.getStatus(),
+                refund.getReason(), refund.getResolutionNote(), refund.getCreatedAt(), refund.getUpdatedAt());
     }
 
     private PaymentStatusResponse toStatusResponse(Payment payment) {

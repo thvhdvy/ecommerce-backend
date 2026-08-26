@@ -5,6 +5,9 @@ import com.thanhnguyen.ecommercebackend.order.entity.OrderStatus;
 import com.thanhnguyen.ecommercebackend.order.service.OrderService;
 import com.thanhnguyen.ecommercebackend.payment.entity.Payment;
 import com.thanhnguyen.ecommercebackend.payment.entity.PaymentStatus;
+import com.thanhnguyen.ecommercebackend.payment.entity.PaymentWebhookEvent;
+import com.thanhnguyen.ecommercebackend.payment.entity.Refund;
+import com.thanhnguyen.ecommercebackend.payment.entity.RefundStatus;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotAllowedException;
 import com.thanhnguyen.ecommercebackend.payment.exception.PaymentNotFoundException;
 import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotAllowedException;
@@ -167,6 +170,7 @@ class PaymentServiceImplTest {
 
         assertThat(response.get("RspCode")).isEqualTo("04");
         verify(orderService, never()).confirmPayment(anyLong());
+        verify(webhookEventRepository).insertIfAbsent(eq("VNP-TXN-4"), eq("AMOUNT_MISMATCH"), anyString());
     }
 
     @Test
@@ -260,6 +264,46 @@ class PaymentServiceImplTest {
         assertThat(response.getStatus()).isEqualTo(PaymentStatus.PENDING);
         verify(orderService, never()).confirmPayment(anyLong());
         verify(orderService, never()).markPaymentFailed(anyLong(), anyString());
+    }
+
+    @Test
+    void listFailedRefunds_shouldMapEntitiesToResponses() {
+        Refund refund = new Refund(new Payment(10L, "10-999", new BigDecimal("45.00")), 10L, new BigDecimal("45.00"), "reason");
+        refund.setId(7L);
+        refund.setStatus(RefundStatus.REFUND_FAILED);
+        when(refundLedger.listFailedRefunds()).thenReturn(List.of(refund));
+
+        var result = paymentService.listFailedRefunds();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getId()).isEqualTo(7L);
+        assertThat(result.get(0).getOrderId()).isEqualTo(10L);
+        assertThat(result.get(0).getStatus()).isEqualTo(RefundStatus.REFUND_FAILED);
+    }
+
+    @Test
+    void resolveRefundManually_shouldDelegateToLedger() {
+        paymentService.resolveRefundManually(7L, "note");
+
+        verify(refundLedger).manuallyResolve(7L, "note");
+    }
+
+    @Test
+    void listAmountMismatches_shouldMapEventsToResponses() {
+        PaymentWebhookEvent event = new PaymentWebhookEvent();
+        event.setId(1L);
+        event.setVnpTransactionNo("VNP-TXN-4");
+        event.setEventType("AMOUNT_MISMATCH");
+        event.setPayload("{...}");
+        event.setProcessedAt(java.time.LocalDateTime.now());
+        when(webhookEventRepository.findByEventTypeOrderByProcessedAtDesc("AMOUNT_MISMATCH"))
+                .thenReturn(List.of(event));
+
+        var result = paymentService.listAmountMismatches();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getVnpTransactionNo()).isEqualTo("VNP-TXN-4");
+        assertThat(result.get(0).getEventType()).isEqualTo("AMOUNT_MISMATCH");
     }
 
     private Map<String, String> ipnParams(String txnRef, String transactionNo, String responseCode, String amount) {

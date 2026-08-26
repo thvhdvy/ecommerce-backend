@@ -481,6 +481,72 @@ class ShippingControllerIntegrationTest {
     }
 
     @Test
+    void confirmDelivery_shouldMoveOrderToDelivered_whenAdminConfirmsManually() throws Exception {
+        String sellerToken = becomeSeller("confirm1");
+        Long productId = createProductWithStock(sellerToken, "confirm1", new BigDecimal("10.00"), 5);
+        String customerToken = registerAndLogin("shipping-customer-confirm1@example.com", UserRole.CUSTOMER);
+        Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
+
+        String shipperToken = registerAndLogin("shipping-shipper-confirm1@example.com", UserRole.SHIPPER);
+        User shipper = userRepository.findByEmail("shipping-shipper-confirm1@example.com").orElseThrow();
+        String adminToken = registerAndLogin("shipping-admin-confirm-action1@example.com", UserRole.ADMIN);
+        assignShipper(adminToken, orderId, shipper.getId());
+
+        // Shipper da giao thanh cong nhung app crash, khong gui duoc status update len he thong.
+        // Admin doi soat qua bao cao ngoai he thong roi xac nhan thu cong.
+        mockMvc.perform(patch("/api/admin/orders/" + orderId + "/confirm-delivery")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("DELIVERED")));
+
+        mockMvc.perform(get("/api/orders/" + orderId)
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("DELIVERED")));
+
+        mockMvc.perform(get("/api/shipper/deliveries")
+                        .header("Authorization", "Bearer " + shipperToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].status", is("DELIVERED")));
+    }
+
+    @Test
+    void confirmDelivery_shouldReturn409_whenDeliveryAlreadyDelivered() throws Exception {
+        String sellerToken = becomeSeller("confirm2");
+        Long productId = createProductWithStock(sellerToken, "confirm2", new BigDecimal("10.00"), 5);
+        String customerToken = registerAndLogin("shipping-customer-confirm2@example.com", UserRole.CUSTOMER);
+        Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
+
+        String shipperToken = registerAndLogin("shipping-shipper-confirm2@example.com", UserRole.SHIPPER);
+        User shipper = userRepository.findByEmail("shipping-shipper-confirm2@example.com").orElseThrow();
+        String adminToken = registerAndLogin("shipping-admin-confirm-action2@example.com", UserRole.ADMIN);
+        String deliveryId = assignShipper(adminToken, orderId, shipper.getId());
+
+        mockMvc.perform(patch("/api/shipper/deliveries/" + deliveryId + "/status")
+                        .header("Authorization", "Bearer " + shipperToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new DeliveryStatusUpdateRequest(DeliveryStatus.DELIVERED, null))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/admin/orders/" + orderId + "/confirm-delivery")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code", is("DELIVERY_NOT_ALLOWED")));
+    }
+
+    @Test
+    void confirmDelivery_shouldReturn403_forNonAdmin() throws Exception {
+        String sellerToken = becomeSeller("confirm3");
+        Long productId = createProductWithStock(sellerToken, "confirm3", new BigDecimal("10.00"), 5);
+        String customerToken = registerAndLogin("shipping-customer-confirm3@example.com", UserRole.CUSTOMER);
+        Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
+
+        mockMvc.perform(patch("/api/admin/orders/" + orderId + "/confirm-delivery")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void assignShipper_shouldReturn409_whenTargetUserNotShipper() throws Exception {
         String sellerToken = becomeSeller("notshipper1");
         Long productId = createProductWithStock(sellerToken, "notshipper1", new BigDecimal("10.00"), 5);

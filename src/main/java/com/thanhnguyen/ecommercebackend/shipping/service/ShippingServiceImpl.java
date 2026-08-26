@@ -100,11 +100,27 @@ public class ShippingServiceImpl implements ShippingService {
 
         switch (target) {
             case IN_TRANSIT -> applyInTransit(delivery, previousStatus);
-            case DELIVERED -> applyDelivered(delivery, previousStatus);
+            case DELIVERED -> applyDelivered(delivery, previousStatus, delivery.getShipper(), null);
             case FAILED -> applyFailed(delivery, previousStatus, request);
             case ASSIGNED -> throw new DeliveryNotAllowedException("Cannot manually move a delivery back to ASSIGNED");
         }
 
+        return toResponse(delivery);
+    }
+
+    @Override
+    @Transactional
+    public DeliveryResponse confirmDeliveredManually(User admin, Long orderId) {
+        Delivery delivery = deliveryRepository.findByOrderId(orderId)
+                .orElseThrow(() -> new DeliveryNotFoundException(orderId));
+
+        if (!IN_PROGRESS_STATUSES.contains(delivery.getStatus())) {
+            throw new DeliveryNotAllowedException(
+                    "Delivery is not in progress, current status: " + delivery.getStatus());
+        }
+
+        applyDelivered(delivery, delivery.getStatus(), admin,
+                "Admin xac nhan giao thanh cong thu cong (doi soat ngoai he thong)");
         return toResponse(delivery);
     }
 
@@ -116,12 +132,12 @@ public class ShippingServiceImpl implements ShippingService {
                 new DeliveryStatusHistory(delivery, previousStatus, DeliveryStatus.IN_TRANSIT, delivery.getShipper(), null));
     }
 
-    private void applyDelivered(Delivery delivery, DeliveryStatus previousStatus) {
+    private void applyDelivered(Delivery delivery, DeliveryStatus previousStatus, User actor, String note) {
         delivery.setStatus(DeliveryStatus.DELIVERED);
         delivery.setDeliveredAt(LocalDateTime.now());
         deliveryRepository.save(delivery);
         deliveryStatusHistoryRepository.save(
-                new DeliveryStatusHistory(delivery, previousStatus, DeliveryStatus.DELIVERED, delivery.getShipper(), null));
+                new DeliveryStatusHistory(delivery, previousStatus, DeliveryStatus.DELIVERED, actor, note));
         orderService.markDelivered(delivery.getOrderId(), delivery.getShipper());
     }
 

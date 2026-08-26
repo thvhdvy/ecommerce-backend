@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 @Repository
 public interface PaymentWebhookEventRepository extends JpaRepository<PaymentWebhookEvent, Long> {
     @Modifying
@@ -17,4 +19,6 @@ public interface PaymentWebhookEventRepository extends JpaRepository<PaymentWebh
             @Param("vnpTransactionNo") String vnpTransactionNo,
             @Param("eventType") String eventType,
             @Param("payload") String payload);
+
+    List<PaymentWebhookEvent> findByEventTypeOrderByProcessedAtDesc(String eventType);
 }

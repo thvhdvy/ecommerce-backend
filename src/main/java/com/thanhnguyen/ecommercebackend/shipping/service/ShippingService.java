@@ -18,4 +18,10 @@ public interface ShippingService {
 
     /** Shipper cập nhật trạng thái giao hàng (IN_TRANSIT/DELIVERED/FAILED). */
     DeliveryResponse updateDeliveryStatus(User currentUser, Long deliveryId, DeliveryStatusUpdateRequest request);
+
+    /**
+     * Admin xác nhận giao hàng thành công thủ công khi shipper đã giao nhưng hệ thống không nhận
+     * được cập nhật (app crash, mất mạng...) — đối soát qua báo cáo ngoài hệ thống (Flow 4).
+     */
+    DeliveryResponse confirmDeliveredManually(User admin, Long orderId);
 }
