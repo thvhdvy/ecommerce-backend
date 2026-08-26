@@ -252,11 +252,13 @@ class OrderControllerIntegrationTest {
         mockMvc.perform(get("/api/orders")
                         .header("Authorization", "Bearer " + otherToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(0)));
+                .andExpect(jsonPath("$.data.content.length()", is(0)))
+                .andExpect(jsonPath("$.data.totalElements", is(0)));
 
         mockMvc.perform(get("/api/orders")
                         .header("Authorization", "Bearer " + customerToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(1)));
+                .andExpect(jsonPath("$.data.content.length()", is(1)))
+                .andExpect(jsonPath("$.data.totalElements", is(1)));
     }
 }

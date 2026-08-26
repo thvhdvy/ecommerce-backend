@@ -13,8 +13,6 @@ import java.util.Optional;
 public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
     List<OrderItem> findAllByOrderId(Long orderId);
 
-    List<OrderItem> findAllBySellerIdOrderByOrder_CreatedAtDesc(Long sellerId);
-
     /** Dung de verify quyen review: customer da tung mua productId nay va order da DELIVERED/COMPLETED chua. */
     Optional<OrderItem> findFirstByProductIdAndOrder_CustomerIdAndOrder_StatusInOrderByOrder_CreatedAtDesc(
             Long productId, Long customerId, Collection<OrderStatus> statuses);

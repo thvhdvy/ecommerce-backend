@@ -194,7 +194,7 @@ class AdminOrderControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         Long orderItemId = objectMapper.readTree(sellerOrders.getResponse().getContentAsString())
-                .get("data").get(0).get("items").get(0).get("id").asLong();
+                .get("data").get("content").get(0).get("items").get(0).get("id").asLong();
 
         mockMvc.perform(patch("/api/seller/order-items/" + orderItemId + "/status")
                         .header("Authorization", "Bearer " + sellerToken))

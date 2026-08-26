@@ -216,10 +216,10 @@ class SellerOrderControllerIntegrationTest {
         MvcResult sellerOrders = mockMvc.perform(get("/api/seller/orders")
                         .header("Authorization", "Bearer " + sellerToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(1)))
+                .andExpect(jsonPath("$.data.content.length()", is(1)))
                 .andReturn();
         Long orderItemId = objectMapper.readTree(sellerOrders.getResponse().getContentAsString())
-                .get("data").get(0).get("items").get(0).get("id").asLong();
+                .get("data").get("content").get(0).get("items").get(0).get("id").asLong();
 
         mockMvc.perform(patch("/api/seller/order-items/" + orderItemId + "/status")
                         .header("Authorization", "Bearer " + sellerToken))
@@ -248,18 +248,18 @@ class SellerOrderControllerIntegrationTest {
         MvcResult seller1Orders = mockMvc.perform(get("/api/seller/orders")
                         .header("Authorization", "Bearer " + seller1Token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(1)))
-                .andExpect(jsonPath("$.data[0].items.length()", is(1)))
+                .andExpect(jsonPath("$.data.content.length()", is(1)))
+                .andExpect(jsonPath("$.data.content[0].items.length()", is(1)))
                 .andReturn();
         Long item1Id = objectMapper.readTree(seller1Orders.getResponse().getContentAsString())
-                .get("data").get(0).get("items").get(0).get("id").asLong();
+                .get("data").get("content").get(0).get("items").get(0).get("id").asLong();
 
         MvcResult seller2Orders = mockMvc.perform(get("/api/seller/orders")
                         .header("Authorization", "Bearer " + seller2Token))
                 .andExpect(status().isOk())
                 .andReturn();
         Long item2Id = objectMapper.readTree(seller2Orders.getResponse().getContentAsString())
-                .get("data").get(0).get("items").get(0).get("id").asLong();
+                .get("data").get("content").get(0).get("items").get(0).get("id").asLong();
 
         mockMvc.perform(patch("/api/seller/order-items/" + item1Id + "/status")
                         .header("Authorization", "Bearer " + seller1Token))
@@ -297,7 +297,7 @@ class SellerOrderControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         Long orderItemId = objectMapper.readTree(sellerOrders.getResponse().getContentAsString())
-                .get("data").get(0).get("items").get(0).get("id").asLong();
+                .get("data").get("content").get(0).get("items").get(0).get("id").asLong();
 
         mockMvc.perform(patch("/api/seller/order-items/" + orderItemId + "/status")
                         .header("Authorization", "Bearer " + otherSellerToken))
@@ -318,7 +318,7 @@ class SellerOrderControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         Long orderItemId = objectMapper.readTree(sellerOrders.getResponse().getContentAsString())
-                .get("data").get(0).get("items").get(0).get("id").asLong();
+                .get("data").get("content").get(0).get("items").get(0).get("id").asLong();
 
         mockMvc.perform(patch("/api/seller/order-items/" + orderItemId + "/status")
                         .header("Authorization", "Bearer " + sellerToken))
@@ -340,7 +340,7 @@ class SellerOrderControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         Long orderItemId = objectMapper.readTree(sellerOrders.getResponse().getContentAsString())
-                .get("data").get(0).get("items").get(0).get("id").asLong();
+                .get("data").get("content").get(0).get("items").get(0).get("id").asLong();
 
         mockMvc.perform(patch("/api/seller/order-items/" + orderItemId + "/status")
                         .header("Authorization", "Bearer " + sellerToken))

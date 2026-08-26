@@ -12,6 +12,8 @@ import com.thanhnguyen.ecommercebackend.user.entity.User;
 import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.Map;
 
 public interface ProductService {
     ProductResponse create(User currentUser, ProductCreateRequest request);
@@ -23,6 +25,13 @@ public interface ProductService {
     InventoryResponse updateInventory(User currentUser, Long productId, UpdateInventoryRequest request);
 
     ProductResponse getActiveById(Long productId);
+
+    /**
+     * Batch variant của getActiveById — load nhiều sản phẩm ACTIVE bằng 1 query IN (chống N+1,
+     * dùng bởi Cart module khi map giỏ hàng). Không throw khi thiếu id: id không ACTIVE/không tồn tại
+     * chỉ vắng mặt trong Map trả về, caller tự quyết cách xử lý (VD: loại item mồ côi khỏi giỏ).
+     */
+    Map<Long, ProductResponse> getActiveByIds(Collection<Long> productIds);
 
     /** Public search: chỉ trả sản phẩm ACTIVE, filter động qua JPA Specification + pagination/sort. */
     PageResponse<ProductResponse> search(ProductSearchCriteria criteria, Pageable pageable);

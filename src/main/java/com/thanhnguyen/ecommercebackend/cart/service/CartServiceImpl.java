@@ -10,7 +10,6 @@ import com.thanhnguyen.ecommercebackend.cart.exception.CartItemNotFoundException
 import com.thanhnguyen.ecommercebackend.cart.repository.CartItemRepository;
 import com.thanhnguyen.ecommercebackend.cart.repository.CartRepository;
 import com.thanhnguyen.ecommercebackend.product.dto.ProductResponse;
-import com.thanhnguyen.ecommercebackend.product.exception.ProductNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.service.ProductService;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -110,12 +110,19 @@ public class CartServiceImpl implements CartService {
     private CartResponse toResponse(Cart cart) {
         List<CartItemResponse> responses = new ArrayList<>();
 
-        for (CartItem item : cartItemRepository.findAllByCartId(cart.getId())) {
-            try {
-                ProductResponse product = productService.getActiveById(item.getProductId());
-                responses.add(toItemResponse(item, product));
-            } catch (ProductNotFoundException ex) {
+        // Batch load 1 query IN thay vi goi getActiveById() tung item (N+1) — toResponse chay tren
+        // moi thao tac cart (get/add/update/remove/consume) nen day la hot path.
+        List<CartItem> items = cartItemRepository.findAllByCartId(cart.getId());
+        Map<Long, ProductResponse> products = productService.getActiveByIds(
+                items.stream().map(CartItem::getProductId).toList());
+
+        for (CartItem item : items) {
+            ProductResponse product = products.get(item.getProductId());
+            if (product == null) {
+                // San pham bi an/xoa khi dang nam trong gio -> loai khoi gio (edge case Flow 2, design doc)
                 cartItemRepository.delete(item);
+            } else {
+                responses.add(toItemResponse(item, product));
             }
         }
 

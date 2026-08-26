@@ -20,6 +20,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.BatchSize;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -69,8 +70,13 @@ public class Order {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
+    // @BatchSize (cung pattern voi Product.images): khi list N order roi truy cap items cua tung
+    // order (toResponse), Hibernate load items theo lo bang 1 query IN thay vi N query rieng —
+    // chong N+1 cho cac endpoint list ma van paginate duoc o DB (fetch-join collection + Pageable
+    // se bi Hibernate paginate in-memory, khong dung duoc).
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @OrderBy("id ASC")
+    @BatchSize(size = 50)
     private List<OrderItem> items = new ArrayList<>();
 
     @PrePersist

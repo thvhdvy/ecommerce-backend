@@ -1,16 +1,16 @@
 package com.thanhnguyen.ecommercebackend.order.service;
 
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.order.dto.CheckoutRequest;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemResponse;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderResponse;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
-
-import java.util.List;
+import org.springframework.data.domain.Pageable;
 
 public interface OrderService {
     OrderResponse checkout(User currentUser, CheckoutRequest request);
 
-    List<OrderResponse> listMyOrders(User currentUser);
+    PageResponse<OrderResponse> listMyOrders(User currentUser, Pageable pageable);
 
     OrderResponse getMyOrder(User currentUser, Long orderId);
 
@@ -38,7 +38,7 @@ public interface OrderService {
     void markPaymentFailed(Long orderId, String reason);
 
     /** Seller xem các order chứa item của mình — mỗi order chỉ trả về item thuộc seller đó. */
-    List<OrderResponse> listSellerOrders(User currentUser);
+    PageResponse<OrderResponse> listSellerOrders(User currentUser, Pageable pageable);
 
     /** Seller đóng gói 1 order item; nếu 100% item của order đã PACKED thì order tự chuyển CONFIRMED → PACKED. */
     OrderItemResponse packOrderItem(User currentUser, Long orderItemId);
@@ -77,5 +77,5 @@ public interface OrderService {
     Long findEligibleOrderIdForReview(User customer, Long productId);
 
     /** Admin: xem toàn bộ order trong hệ thống. */
-    List<OrderResponse> listAllOrders();
+    PageResponse<OrderResponse> listAllOrders(Pageable pageable);
 }

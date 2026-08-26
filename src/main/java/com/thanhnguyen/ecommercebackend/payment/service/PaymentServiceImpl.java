@@ -43,6 +43,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final OrderService orderService;
     private final VnpayClient vnpayClient;
     private final RefundLedger refundLedger;
+    private final PaymentResultApplier resultApplier;
 
     @Override
     @Transactional
@@ -74,8 +75,12 @@ public class PaymentServiceImpl implements PaymentService {
         return new PaymentIntentResponse(orderId, paymentUrl, saved.getAmount());
     }
 
+    // Khong @Transactional: reconcileWithVnpay() la network call toi VNPay (timeout toi da 10s).
+    // Neu de @Transactional o day, moi user dang cho thanh toan refresh trang se giu 1 connection
+    // trong pool suot thoi gian cho VNPay — du dong nguoi cho la can pool, treo toan app.
+    // Cung nguyen tac voi refund()/RefundLedger: DB write nam trong transaction ngan rieng
+    // (PaymentResultApplier), network call nam ngoai.
     @Override
-    @Transactional
     public PaymentStatusResponse getStatus(User currentUser, Long orderId, String clientIp) {
         orderService.getMyOrder(currentUser, orderId); // ownership check, throws if not found/owned
         Payment payment = paymentRepository.findByOrderId(orderId)
@@ -104,23 +109,7 @@ public class PaymentServiceImpl implements PaymentService {
             return payment;
         }
 
-        // Dung chung 1 hang rao idempotency voi handleIpn — neu IPN that su toi truoc/sau,
-        // 2 duong deu dung chung 1 vnp_transaction_no nen khong xu ly trung.
-        int inserted = webhookEventRepository.insertIfAbsent(
-                result.vnpTransactionNo(), "QUERY_RECONCILE", result.toString());
-        if (inserted == 0) {
-            return paymentRepository.findByOrderId(payment.getOrderId()).orElse(payment);
-        }
-
-        if (result.isSuccess()) {
-            return applySuccess(payment, result.vnpTransactionNo());
-        }
-        // "01" (dang xu ly) khong ket luan gi; cac ma khac coi nhu that bai
-        if (!"01".equals(result.transactionStatus())) {
-            return applyFailure(payment, result.vnpTransactionNo(),
-                    "VNPay querydr transactionStatus=" + result.transactionStatus());
-        }
-        return payment;
+        return resultApplier.applyQueryResult(payment.getOrderId(), result);
     }
 
     @Override
@@ -161,32 +150,12 @@ public class PaymentServiceImpl implements PaymentService {
         }
 
         if ("00".equals(responseCode)) {
-            applySuccess(payment, transactionNo);
+            resultApplier.applySuccess(payment, transactionNo);
         } else {
-            applyFailure(payment, transactionNo, "VNPay responseCode=" + responseCode);
+            resultApplier.applyFailure(payment, transactionNo, "VNPay responseCode=" + responseCode);
         }
 
         return ipnResponse("00", "Confirm Success");
-    }
-
-    // saveAndFlush (khong chi save): khi goi tu handleIpn, native @Modifying query insertIfAbsent()
-    // truoc do khong duoc Hibernate track trong dirty-checking cua persistence context, nen thay doi
-    // status sau do can flush tuong minh truoc khi orderService.confirmPayment() doc lai state —
-    // khong the dua vao auto-flush luc commit.
-    private Payment applySuccess(Payment payment, String vnpTransactionNo) {
-        payment.setVnpTransactionNo(vnpTransactionNo);
-        payment.setStatus(PaymentStatus.SUCCEEDED);
-        Payment saved = paymentRepository.saveAndFlush(payment);
-        orderService.confirmPayment(payment.getOrderId());
-        return saved;
-    }
-
-    private Payment applyFailure(Payment payment, String vnpTransactionNo, String reason) {
-        payment.setVnpTransactionNo(vnpTransactionNo);
-        payment.setStatus(PaymentStatus.FAILED);
-        Payment saved = paymentRepository.saveAndFlush(payment);
-        orderService.markPaymentFailed(payment.getOrderId(), reason);
-        return saved;
     }
 
     // Khong @Transactional: chi orchestrate, khong tu ghi DB. requestRefund() la loi goi mang toi

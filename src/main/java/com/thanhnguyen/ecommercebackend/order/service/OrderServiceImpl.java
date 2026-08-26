@@ -3,6 +3,7 @@ package com.thanhnguyen.ecommercebackend.order.service;
 import com.thanhnguyen.ecommercebackend.cart.dto.CartItemResponse;
 import com.thanhnguyen.ecommercebackend.cart.dto.CartResponse;
 import com.thanhnguyen.ecommercebackend.cart.service.CartService;
+import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.inventory.service.InventoryService;
 import com.thanhnguyen.ecommercebackend.order.dto.CheckoutRequest;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemResponse;
@@ -29,6 +30,7 @@ import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.exception.SellerLockedException;
 import com.thanhnguyen.ecommercebackend.user.repository.SellerRepository;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.domain.Pageable;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,11 +39,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 @Service
 public class OrderServiceImpl implements OrderService {
@@ -118,10 +117,9 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<OrderResponse> listMyOrders(User currentUser) {
-        return orderRepository.findAllByCustomerIdOrderByCreatedAtDesc(currentUser.getId()).stream()
-                .map(this::toResponse)
-                .toList();
+    public PageResponse<OrderResponse> listMyOrders(User currentUser, Pageable pageable) {
+        return PageResponse.from(
+                orderRepository.findAllByCustomerId(currentUser.getId(), pageable).map(this::toResponse));
     }
 
     @Override
@@ -284,16 +282,15 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<OrderResponse> listSellerOrders(User currentUser) {
+    public PageResponse<OrderResponse> listSellerOrders(User currentUser, Pageable pageable) {
         Seller seller = resolveSeller(currentUser);
-        List<OrderItem> items = orderItemRepository.findAllBySellerIdOrderByOrder_CreatedAtDesc(seller.getId());
-
-        Map<Long, List<OrderItem>> itemsByOrderId = items.stream()
-                .collect(Collectors.groupingBy(item -> item.getOrder().getId(), LinkedHashMap::new, Collectors.toList()));
-
-        return itemsByOrderId.values().stream()
-                .map(orderItems -> toResponse(orderItems.get(0).getOrder(), orderItems))
-                .toList();
+        // Paginate o cap order (khong phai cap item); moi order chi tra ve item thuoc seller nay
+        // (data visibility rule — design doc 0.6). items load theo lo nho @BatchSize tren Order.items.
+        return PageResponse.from(
+                orderRepository.findAllContainingSellerItems(seller.getId(), pageable)
+                        .map(order -> toResponse(order, order.getItems().stream()
+                                .filter(item -> item.getSellerId().equals(seller.getId()))
+                                .toList())));
     }
 
     @Override
@@ -436,10 +433,8 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<OrderResponse> listAllOrders() {
-        return orderRepository.findAllByOrderByCreatedAtDesc().stream()
-                .map(this::toResponse)
-                .toList();
+    public PageResponse<OrderResponse> listAllOrders(Pageable pageable) {
+        return PageResponse.from(orderRepository.findAll(pageable).map(this::toResponse));
     }
 
     private Seller resolveSeller(User currentUser) {

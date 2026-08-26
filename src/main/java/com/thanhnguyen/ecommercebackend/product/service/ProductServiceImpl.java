@@ -38,7 +38,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -121,6 +125,16 @@ public class ProductServiceImpl implements ProductService {
         Product product = productRepository.findByIdAndStatus(productId, ProductStatus.ACTIVE)
                 .orElseThrow(() -> new ProductNotFoundException(productId));
         return toResponse(product);
+    }
+
+    @Override
+    public Map<Long, ProductResponse> getActiveByIds(Collection<Long> productIds) {
+        if (productIds.isEmpty()) {
+            return Map.of();
+        }
+        return productRepository.findAllByIdInAndStatus(productIds, ProductStatus.ACTIVE).stream()
+                .map(this::toResponse)
+                .collect(Collectors.toMap(ProductResponse::getId, Function.identity()));
     }
 
     @Override

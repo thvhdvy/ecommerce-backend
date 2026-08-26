@@ -10,11 +10,15 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface ProductRepository extends JpaRepository<Product, Long>, JpaSpecificationExecutor<Product> {
     Optional<Product> findByIdAndStatus(Long id, ProductStatus status);
+
+    List<Product> findAllByIdInAndStatus(Collection<Long> ids, ProductStatus status);
 
     /**
      * Pessimistic write lock — dung khi recalculate rating_avg tu Review module de serialize

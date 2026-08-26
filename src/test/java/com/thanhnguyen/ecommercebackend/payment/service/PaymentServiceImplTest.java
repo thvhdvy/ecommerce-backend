@@ -17,9 +17,9 @@ import com.thanhnguyen.ecommercebackend.payment.util.VnpayClient;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayQueryResult;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayRefundResult;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -57,8 +57,18 @@ class PaymentServiceImplTest {
     @Mock
     private RefundLedger refundLedger;
 
-    @InjectMocks
     private PaymentServiceImpl paymentService;
+
+    // PaymentResultApplier dung instance that (khong mock) boc quanh cung bo mock — de cac test
+    // handleIpn/getStatus van assert duoc behavior cuoi cung (payment status doi, orderService
+    // duoc goi) thay vi chi verify delegation.
+    @BeforeEach
+    void setUp() {
+        PaymentResultApplier resultApplier =
+                new PaymentResultApplier(paymentRepository, webhookEventRepository, orderService);
+        paymentService = new PaymentServiceImpl(
+                paymentRepository, webhookEventRepository, orderService, vnpayClient, refundLedger, resultApplier);
+    }
 
     private final User customer = customer();
 
@@ -249,6 +259,26 @@ class PaymentServiceImplTest {
 
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
         verify(orderService).confirmPayment(10L);
+    }
+
+    @Test
+    void getStatus_shouldNotReapply_whenIpnAlreadyProcessedDuringQuerydr() {
+        // Lan doc dau (getStatus): PENDING -> di hoi VNPay. Lan doc lai (applier, sau network call):
+        // IPN da xu ly xong, status da SUCCEEDED -> khong ap lai, khong confirm order lan 2.
+        Payment pendingSnapshot = new Payment(10L, "10-999", new BigDecimal("45.00"));
+        Payment confirmedByIpn = new Payment(10L, "10-999", new BigDecimal("45.00"));
+        confirmedByIpn.setStatus(PaymentStatus.SUCCEEDED);
+        when(orderService.getMyOrder(customer, 10L)).thenReturn(orderResponse(OrderStatus.PENDING_PAYMENT));
+        when(paymentRepository.findByOrderId(10L))
+                .thenReturn(Optional.of(pendingSnapshot), Optional.of(confirmedByIpn));
+        when(vnpayClient.queryTransactionStatus(eq("10-999"), any(), anyString(), anyString()))
+                .thenReturn(new VnpayQueryResult(true, "00", "VNP-TXN-Q2"));
+
+        var response = paymentService.getStatus(customer, 10L, "127.0.0.1");
+
+        assertThat(response.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
+        verify(orderService, never()).confirmPayment(anyLong());
+        verify(webhookEventRepository, never()).insertIfAbsent(anyString(), anyString(), anyString());
     }
 
     @Test
