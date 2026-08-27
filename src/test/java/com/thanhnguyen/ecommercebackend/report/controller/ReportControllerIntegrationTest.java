@@ -114,12 +114,20 @@ class ReportControllerIntegrationTest {
     }
 
     private Long createProductInCategory(Long categoryId, String suffix, BigDecimal price, int stock) throws Exception {
+        return (Long) createProductInCategoryWithSeller(categoryId, suffix, price, stock)[0];
+    }
+
+    /** Tao product + seller, tra ve [productId, sellerId] — dung khi test can sellerId (VD cancel per-seller). */
+    private Object[] createProductInCategoryWithSeller(Long categoryId, String suffix, BigDecimal price, int stock) throws Exception {
         String sellerToken = registerAndLogin("report-seller-" + suffix + "@example.com", UserRole.CUSTOMER);
-        mockMvc.perform(post("/api/sellers")
+        MvcResult sellerResult = mockMvc.perform(post("/api/sellers")
                         .header("Authorization", "Bearer " + sellerToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new BecomeSellerRequest("Shop-" + suffix, null))))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated())
+                .andReturn();
+        Long sellerId = objectMapper.readTree(sellerResult.getResponse().getContentAsString())
+                .get("data").get("id").asLong();
 
         MvcResult productResult = mockMvc.perform(post("/api/seller/products")
                         .header("Authorization", "Bearer " + sellerToken)
@@ -137,7 +145,7 @@ class ReportControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(new UpdateInventoryRequest(stock))))
                 .andExpect(status().isOk());
 
-        return productId;
+        return new Object[]{productId, sellerId};
     }
 
     private Long checkoutOrder(String customerToken, Long productId, int quantity) throws Exception {
@@ -269,11 +277,13 @@ class ReportControllerIntegrationTest {
         DaySnapshot before = revenueForToday(adminToken, today);
 
         Long categoryId = createCategory(adminToken, "day2");
-        Long productId = createProductInCategory(categoryId, "day2", new BigDecimal("40.00"), 5);
+        Object[] productInfo = createProductInCategoryWithSeller(categoryId, "day2", new BigDecimal("40.00"), 5);
+        Long productId = (Long) productInfo[0];
+        Long sellerId = (Long) productInfo[1];
         String customerToken = registerAndLogin("report-customer-day2@example.com", UserRole.CUSTOMER);
         Long orderId = confirmOrderViaVnpay(customerToken, productId, 1, "4000");
 
-        mockMvc.perform(post("/api/orders/" + orderId + "/cancel")
+        mockMvc.perform(post("/api/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
                         .header("Authorization", "Bearer " + customerToken))
                 .andExpect(status().isOk());
 

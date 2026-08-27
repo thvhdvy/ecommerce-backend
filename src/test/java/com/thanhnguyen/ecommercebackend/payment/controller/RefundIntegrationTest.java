@@ -101,6 +101,11 @@ class RefundIntegrationTest {
     }
 
     private Long createProductWithStock(String suffix, BigDecimal price, int stock) throws Exception {
+        return (Long) createProductWithStockAndSeller(suffix, price, stock)[0];
+    }
+
+    /** Tao product + seller, tra ve [productId, sellerId] — dung khi test can sellerId (VD cancel per-seller). */
+    private Object[] createProductWithStockAndSeller(String suffix, BigDecimal price, int stock) throws Exception {
         String adminToken = registerAndLogin("refund-admin-" + suffix + "@example.com", UserRole.ADMIN);
 
         MvcResult categoryResult = mockMvc.perform(post("/api/admin/categories")
@@ -113,11 +118,14 @@ class RefundIntegrationTest {
                 .get("data").get("id").asLong();
 
         String sellerToken = registerAndLogin("refund-seller-" + suffix + "@example.com", UserRole.CUSTOMER);
-        mockMvc.perform(post("/api/sellers")
+        MvcResult sellerResult = mockMvc.perform(post("/api/sellers")
                         .header("Authorization", "Bearer " + sellerToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new BecomeSellerRequest("Shop-" + suffix, null))))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated())
+                .andReturn();
+        Long sellerId = objectMapper.readTree(sellerResult.getResponse().getContentAsString())
+                .get("data").get("id").asLong();
 
         MvcResult productResult = mockMvc.perform(post("/api/seller/products")
                         .header("Authorization", "Bearer " + sellerToken)
@@ -135,7 +143,7 @@ class RefundIntegrationTest {
                         .content(objectMapper.writeValueAsString(new UpdateInventoryRequest(stock))))
                 .andExpect(status().isOk());
 
-        return productId;
+        return new Object[]{productId, sellerId};
     }
 
     private Long checkoutOrder(String customerToken, Long productId, int quantity) throws Exception {
@@ -223,11 +231,13 @@ class RefundIntegrationTest {
                 .when(vnpayClient)
                 .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
 
-        Long productId = createProductWithStock("cancel1", new BigDecimal("20.00"), 10);
+        Object[] productInfo = createProductWithStockAndSeller("cancel1", new BigDecimal("20.00"), 10);
+        Long productId = (Long) productInfo[0];
+        Long sellerId = (Long) productInfo[1];
         String customerToken = registerAndLogin("refund-customer1@example.com", UserRole.CUSTOMER);
         Long orderId = confirmOrderViaVnpay(customerToken, productId, 2, "4000"); // 20.00 * 2 = 40.00
 
-        mockMvc.perform(post("/api/orders/" + orderId + "/cancel")
+        mockMvc.perform(post("/api/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
                         .header("Authorization", "Bearer " + customerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("CANCELLED")));
@@ -274,11 +284,13 @@ class RefundIntegrationTest {
                 .when(vnpayClient)
                 .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
 
-        Long productId = createProductWithStock("failed1", new BigDecimal("12.00"), 5);
+        Object[] productInfo = createProductWithStockAndSeller("failed1", new BigDecimal("12.00"), 5);
+        Long productId = (Long) productInfo[0];
+        Long sellerId = (Long) productInfo[1];
         String customerToken = registerAndLogin("refund-customer4@example.com", UserRole.CUSTOMER);
         Long orderId = confirmOrderViaVnpay(customerToken, productId, 1, "1200");
 
-        mockMvc.perform(post("/api/orders/" + orderId + "/cancel")
+        mockMvc.perform(post("/api/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
                         .header("Authorization", "Bearer " + customerToken))
                 .andExpect(status().isOk());
 
@@ -295,11 +307,13 @@ class RefundIntegrationTest {
                 .when(vnpayClient)
                 .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
 
-        Long productId = createProductWithStock("failed2", new BigDecimal("18.00"), 5);
+        Object[] productInfo = createProductWithStockAndSeller("failed2", new BigDecimal("18.00"), 5);
+        Long productId = (Long) productInfo[0];
+        Long sellerId = (Long) productInfo[1];
         String customerToken = registerAndLogin("refund-customer5@example.com", UserRole.CUSTOMER);
         Long orderId = confirmOrderViaVnpay(customerToken, productId, 1, "1800");
 
-        mockMvc.perform(post("/api/orders/" + orderId + "/cancel")
+        mockMvc.perform(post("/api/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
                         .header("Authorization", "Bearer " + customerToken))
                 .andExpect(status().isOk());
 
@@ -341,11 +355,13 @@ class RefundIntegrationTest {
                 .when(vnpayClient)
                 .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
 
-        Long productId = createProductWithStock("failed3", new BigDecimal("9.00"), 5);
+        Object[] productInfo = createProductWithStockAndSeller("failed3", new BigDecimal("9.00"), 5);
+        Long productId = (Long) productInfo[0];
+        Long sellerId = (Long) productInfo[1];
         String customerToken = registerAndLogin("refund-customer6@example.com", UserRole.CUSTOMER);
         Long orderId = confirmOrderViaVnpay(customerToken, productId, 1, "900");
 
-        mockMvc.perform(post("/api/orders/" + orderId + "/cancel")
+        mockMvc.perform(post("/api/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
                         .header("Authorization", "Bearer " + customerToken))
                 .andExpect(status().isOk());
 

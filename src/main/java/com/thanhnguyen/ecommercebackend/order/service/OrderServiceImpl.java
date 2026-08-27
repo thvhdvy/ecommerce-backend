@@ -59,13 +59,6 @@ public class OrderServiceImpl implements OrderService {
     // Gioi han so order xu ly moi lan scheduled job chay — backlog lon (vd sau downtime) duoc tieu
     // dan qua nhieu lan chay thay vi 1 transaction/1 lan quet khong lo.
     private static final int MAINTENANCE_BATCH_SIZE = 100;
-    private static final Set<OrderStatus> CANCELLABLE_STATUSES = Set.of(OrderStatus.PENDING_PAYMENT, OrderStatus.CONFIRMED);
-    // Admin force-cancel: superset cua CANCELLABLE_STATUSES + PACKED (customer khong tu huy duoc tu PACKED tro di).
-    // SHIPPED/DELIVERED/COMPLETED khong cancel duoc (dung Return/Refund flow — v2, ngoai scope v1).
-    private static final Set<OrderStatus> ADMIN_CANCELLABLE_STATUSES =
-            Set.of(OrderStatus.PENDING_PAYMENT, OrderStatus.CONFIRMED, OrderStatus.PACKED);
-    // Cancel tu cac status nay nghia la order da thanh toan thanh cong -> bat buoc trigger refund (design doc 0.6).
-    private static final Set<OrderStatus> PAID_STATUSES = Set.of(OrderStatus.CONFIRMED, OrderStatus.PACKED);
 
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
@@ -169,15 +162,11 @@ public class OrderServiceImpl implements OrderService {
         return toResponse(order);
     }
 
-    // Chi customer tu huy duoc tu PENDING_PAYMENT/CONFIRMED, nen "da thanh toan" o day chi co the la CONFIRMED.
-    private static final Set<OrderStatus> CUSTOMER_PAID_STATUSES = Set.of(OrderStatus.CONFIRMED);
-
     @Override
     @Transactional
     public OrderResponse cancel(User currentUser, Long orderId) {
         Order order = resolveOwnedOrder(currentUser, orderId);
-        return cancelOrder(order, currentUser, CANCELLABLE_STATUSES, CUSTOMER_PAID_STATUSES,
-                null, "Customer cancelled order after payment");
+        return cancelBeforePayment(order, currentUser, "Customer cancelled order before payment");
     }
 
     @Override
@@ -185,44 +174,116 @@ public class OrderServiceImpl implements OrderService {
     public OrderResponse forceCancel(User admin, Long orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException(orderId));
-        return cancelOrder(order, admin, ADMIN_CANCELLABLE_STATUSES, PAID_STATUSES,
-                "Admin force-cancel", "Admin force-cancelled order after payment");
+        return cancelBeforePayment(order, admin, "Admin force-cancelled order before payment");
     }
 
     /**
-     * Logic dung chung cho cancel() (customer) va forceCancel() (admin) — chi khac nhau ve
-     * tap status cho phep, tap status "da thanh toan" (can refund), va actor/reason ghi history.
+     * Huy toan bo order — chi con ap dung khi PENDING_PAYMENT (design doc v2 muc 10.5.1): tu khi
+     * CONFIRMED tro di, huy phai qua cancelSellerItems/forceCancelSellerItems (per-seller), vi tu
+     * luc do cac seller da co the o nhung tien do khac nhau (pack/delivery doc lap).
      */
-    private OrderResponse cancelOrder(
-            Order order, User actor, Set<OrderStatus> allowedStatuses, Set<OrderStatus> paidStatuses,
-            String historyReason, String refundReason) {
-        if (!allowedStatuses.contains(order.getStatus())) {
+    private OrderResponse cancelBeforePayment(Order order, User actor, String historyReason) {
+        if (order.getStatus() != OrderStatus.PENDING_PAYMENT) {
             throw new OrderCancelNotAllowedException();
         }
 
-        OrderStatus previousStatus = order.getStatus();
-
-        // Cancel truoc payment: reserved > 0, tra lai available. Cancel sau payment (CONFIRMED/PACKED):
-        // reserved da ve 0 tu buoc confirmPayment (commitReservedStock) — khong co gi de release,
-        // va available khong tu tang lai (nhap kho lai thuoc luong return/refund v2, xem design doc dong 333).
-        if (previousStatus == OrderStatus.PENDING_PAYMENT) {
-            for (OrderItem item : order.getItems()) {
-                inventoryService.releaseStock(item.getProductId(), item.getQuantity());
-            }
-            couponService.release(order.getId());
+        for (OrderItem item : order.getItems()) {
+            inventoryService.releaseStock(item.getProductId(), item.getQuantity());
         }
+        couponService.release(order.getId());
 
         order.setStatus(OrderStatus.CANCELLED);
         Order saved = saveWithOptimisticLock(order);
-        orderStatusHistoryRepository.save(
-                new OrderStatusHistory(saved, previousStatus, OrderStatus.CANCELLED, actor, historyReason));
+        orderStatusHistoryRepository.save(new OrderStatusHistory(
+                saved, OrderStatus.PENDING_PAYMENT, OrderStatus.CANCELLED, actor, historyReason));
         eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_CANCELLED, saved.getId()));
 
-        if (paidStatuses.contains(previousStatus)) {
-            refundAfterCommit(order.getId(), refundReason);
+        return toResponse(saved);
+    }
+
+    @Override
+    @Transactional
+    public OrderResponse cancelSellerItems(User currentUser, Long orderId, Long sellerId) {
+        Order order = resolveOwnedOrder(currentUser, orderId);
+        return cancelSellerItems(order, sellerId, currentUser, false);
+    }
+
+    @Override
+    @Transactional
+    public OrderResponse forceCancelSellerItems(User admin, Long orderId, Long sellerId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+        return cancelSellerItems(order, sellerId, admin, true);
+    }
+
+    /**
+     * Huy toan bo phan hang cua 1 seller trong order (design doc v2 muc 10.5). Gate: customer chi
+     * duoc huy khi seller do chua PACKED xong; admin duoc them quyen huy ca khi da PACKED, nhung
+     * khong ai huy duoc khi seller do da co delivery (tuong duong SHIPPED tro len — dung Return flow).
+     * Khong giai phong ton kho (giong rule huy sau CONFIRMED o v1). Refund mot phan qua
+     * PaymentService.refundPartial() da co san cho Return module, prorate giong het cong thuc Return.
+     */
+    private OrderResponse cancelSellerItems(Order order, Long sellerId, User actor, boolean isAdmin) {
+        // SHIPPED/DELIVERED khong can chan rieng: neu order o hang do, MOI seller (ke ca sellerId nay)
+        // da co delivery roi (dinh nghia aggregate-min - muc 10.4), nen check delivery ben duoi da tu chan.
+        if (order.getStatus() != OrderStatus.CONFIRMED && order.getStatus() != OrderStatus.PACKED) {
+            throw new OrderCancelNotAllowedException();
         }
 
-        return toResponse(saved);
+        List<OrderItem> sellerItems = order.getItems().stream()
+                .filter(item -> item.getSellerId().equals(sellerId))
+                .toList();
+        if (sellerItems.isEmpty() || sellerItems.stream().anyMatch(i -> i.getItemStatus() == OrderItemStatus.CANCELLED)) {
+            throw new OrderCancelNotAllowedException();
+        }
+        if (shippingService.getDeliveryStatusesBySeller(order.getId()).containsKey(sellerId)) {
+            throw new OrderCancelNotAllowedException();
+        }
+        boolean allPacked = sellerItems.stream().allMatch(i -> i.getItemStatus() == OrderItemStatus.PACKED);
+        if (allPacked && !isAdmin) {
+            throw new OrderCancelNotAllowedException();
+        }
+
+        BigDecimal refundAmount = proratedRefundAmount(sellerItems, order);
+
+        for (OrderItem item : sellerItems) {
+            item.setItemStatus(OrderItemStatus.CANCELLED);
+        }
+        orderItemRepository.saveAll(sellerItems);
+
+        boolean allSellersCancelled = order.getItems().stream()
+                .allMatch(item -> item.getItemStatus() == OrderItemStatus.CANCELLED);
+        if (allSellersCancelled) {
+            OrderStatus previous = order.getStatus();
+            order.setStatus(OrderStatus.CANCELLED);
+            orderRepository.save(order);
+            orderStatusHistoryRepository.save(new OrderStatusHistory(
+                    order, previous, OrderStatus.CANCELLED, actor, "All sellers cancelled"));
+            eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_CANCELLED, order.getId()));
+        } else {
+            recomputeAggregateStatus(order);
+        }
+
+        if (refundAmount.compareTo(BigDecimal.ZERO) > 0) {
+            refundPartialAfterCommit(order.getId(), refundAmount, "Seller #" + sellerId + " items cancelled");
+        }
+
+        return toResponse(order);
+    }
+
+    // Cung cong thuc prorate voi Return module (ReturnServiceImpl.proratedRefundAmount, design doc
+    // v2 muc 7.3) — tong gross cua cac item thuoc seller, nhan ty le orderTotalAmount/(total+discount).
+    private BigDecimal proratedRefundAmount(List<OrderItem> sellerItems, Order order) {
+        BigDecimal grossAmount = sellerItems.stream()
+                .map(item -> item.getUnitPriceSnapshot().multiply(BigDecimal.valueOf(item.getQuantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalPlusDiscount = order.getTotalAmount().add(order.getDiscountAmount());
+        if (totalPlusDiscount.compareTo(BigDecimal.ZERO) == 0) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal discountRatio = order.getTotalAmount()
+                .divide(totalPlusDiscount, 6, java.math.RoundingMode.HALF_UP);
+        return grossAmount.multiply(discountRatio).setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     // VNPay refund goi mang ra ngoai — khong duoc chay ben trong transaction dang giu row lock cua
@@ -238,6 +299,22 @@ public class OrderServiceImpl implements OrderService {
             });
         } else {
             paymentService.refund(orderId, refundReason, "127.0.0.1");
+        }
+    }
+
+    // returnRequestId=null: refund khong xuat phat tu 1 ReturnRequest (cot refunds.return_request_id
+    // von da nullable — design doc v2 muc 10.5.1). Refund that bai di qua hang doi admin retry san
+    // co (listFailedRefunds/resolveRefundManually), khong can co che retry rieng.
+    private void refundPartialAfterCommit(Long orderId, BigDecimal amount, String reason) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    paymentService.refundPartial(orderId, amount, reason, "127.0.0.1", null);
+                }
+            });
+        } else {
+            paymentService.refundPartial(orderId, amount, reason, "127.0.0.1", null);
         }
     }
 
@@ -394,7 +471,18 @@ public class OrderServiceImpl implements OrderService {
         }
 
         Map<Long, DeliveryStatus> deliveryStatuses = shippingService.getDeliveryStatusesBySeller(order.getId());
-        Set<Long> sellerIds = order.getItems().stream().map(OrderItem::getSellerId).collect(Collectors.toSet());
+        // Seller da bi huy toan bo (item_status = CANCELLED het) la seller "terminal" - loai khoi
+        // tap tinh aggregate-min, khong thi se khoa aggregate o hang thap mai mai (design doc muc 10.4/10.5).
+        Set<Long> cancelledSellerIds = order.getItems().stream()
+                .collect(Collectors.groupingBy(OrderItem::getSellerId))
+                .entrySet().stream()
+                .filter(e -> e.getValue().stream().allMatch(i -> i.getItemStatus() == OrderItemStatus.CANCELLED))
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
+        Set<Long> sellerIds = order.getItems().stream()
+                .map(OrderItem::getSellerId)
+                .filter(sellerId -> !cancelledSellerIds.contains(sellerId))
+                .collect(Collectors.toSet());
 
         int minRank = sellerIds.stream()
                 .mapToInt(sellerId -> rankForSeller(order, sellerId, deliveryStatuses))

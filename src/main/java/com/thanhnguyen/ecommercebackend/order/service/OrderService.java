@@ -27,6 +27,21 @@ public interface OrderService {
      */
     OrderResponse forceCancel(User admin, Long orderId);
 
+    /**
+     * Customer tự hủy phần hàng của 1 seller trong order (design doc v2 mục 10.5) — áp dụng từ
+     * CONFIRMED trở đi (trước đó dùng cancel() hủy cả đơn). Chỉ cho phép khi seller đó chưa PACKED
+     * xong toàn bộ item. Trigger refund một phần (prorate theo item của seller đó), không giải
+     * phóng tồn kho (giống rule cancel sau CONFIRMED ở v1).
+     */
+    OrderResponse cancelSellerItems(User currentUser, Long orderId, Long sellerId);
+
+    /**
+     * Admin force-cancel phần hàng của 1 seller — cho phép cả khi seller đó đã PACKED xong (nhưng
+     * chưa có delivery được assign), bất đối xứng với customer giống rule v1 (mục 0.6). Không check
+     * ownership.
+     */
+    OrderResponse forceCancelSellerItems(User admin, Long orderId, Long sellerId);
+
     void expirePendingPayments();
 
     /** Đọc order theo id, không check ownership — dùng nội bộ bởi Payment module qua service interface. */

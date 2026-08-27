@@ -312,7 +312,7 @@ class AdminOrderControllerIntegrationTest {
         org.assertj.core.api.Assertions.assertThat(latest.getToStatus()).isEqualTo(OrderStatus.CANCELLED);
         // getId() tren lazy proxy khong trigger load (id da co san tren proxy) — an toan ngoai transaction.
         org.assertj.core.api.Assertions.assertThat(latest.getChangedBy().getId()).isEqualTo(adminUserId);
-        org.assertj.core.api.Assertions.assertThat(latest.getReason()).isEqualTo("Admin force-cancel");
+        org.assertj.core.api.Assertions.assertThat(latest.getReason()).isEqualTo("Admin force-cancelled order before payment");
 
         // Reserved stock phai duoc release: mua lai du 5/5 (2 da huy + 3 con lai) phai thanh cong.
         mockMvc.perform(post("/api/cart/items")
@@ -344,12 +344,15 @@ class AdminOrderControllerIntegrationTest {
                 .when(vnpayClient)
                 .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
 
-        Long productId = createProductWithStock(becomeSeller("confirmed1"), "confirmed1", new BigDecimal("20.00"), 5);
+        Object[] sellerInfo = becomeSellerWithId("confirmed1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
+        Long productId = createProductWithStock(sellerToken, "confirmed1", new BigDecimal("20.00"), 5);
         String customerToken = registerAndLogin("admin-order-customer-confirmed1@example.com", UserRole.CUSTOMER);
         Long orderId = confirmOrderViaVnpay(customerToken, productId, 2, "4000"); // 20.00 * 2 = 40.00
 
         String adminToken = registerAndLogin("admin-order-actor-confirmed1@example.com", UserRole.ADMIN);
-        mockMvc.perform(post("/api/admin/orders/" + orderId + "/cancel")
+        mockMvc.perform(post("/api/admin/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("CANCELLED")));
@@ -365,13 +368,15 @@ class AdminOrderControllerIntegrationTest {
                 .when(vnpayClient)
                 .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
 
-        String sellerToken = becomeSeller("packed1");
+        Object[] sellerInfo = becomeSellerWithId("packed1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "packed1", new BigDecimal("15.00"), 5);
         String customerToken = registerAndLogin("admin-order-customer-packed1@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1500");
 
         String adminToken = registerAndLogin("admin-order-actor-packed1@example.com", UserRole.ADMIN);
-        mockMvc.perform(post("/api/admin/orders/" + orderId + "/cancel")
+        mockMvc.perform(post("/api/admin/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("CANCELLED")));
@@ -423,5 +428,96 @@ class AdminOrderControllerIntegrationTest {
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code", is("ORDER_CANCEL_NOT_ALLOWED")));
+    }
+
+    @Test
+    void cancelSellerItems_shouldSucceedAndRefund_whenSellerNotYetPacked() throws Exception {
+        doReturn(VnpayRefundResult.success("VNP-SELLER-CANCEL-1"))
+                .when(vnpayClient)
+                .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
+
+        Object[] sellerInfo = becomeSellerWithId("selcancel1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
+        Long productId = createProductWithStock(sellerToken, "selcancel1", new BigDecimal("25.00"), 5);
+        String customerToken = registerAndLogin("admin-order-customer-selcancel1@example.com", UserRole.CUSTOMER);
+        Long orderId = confirmOrderViaVnpay(customerToken, productId, 2, "5000"); // 25.00 * 2 = 50.00
+
+        mockMvc.perform(post("/api/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("CANCELLED")));
+
+        verify(vnpayClient).requestRefund(
+                anyString(), any(), any(LocalDateTime.class), org.mockito.ArgumentMatchers.eq(new BigDecimal("50.00")),
+                anyString(), anyString());
+    }
+
+    @Test
+    void cancelSellerItems_shouldReturn409_whenSellerAlreadyPacked() throws Exception {
+        Object[] sellerInfo = becomeSellerWithId("selcancel2");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
+        Long productId = createProductWithStock(sellerToken, "selcancel2", new BigDecimal("10.00"), 5);
+        String customerToken = registerAndLogin("admin-order-customer-selcancel2@example.com", UserRole.CUSTOMER);
+        Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
+
+        mockMvc.perform(post("/api/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
+                        .header("Authorization", "Bearer " + customerToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code", is("ORDER_CANCEL_NOT_ALLOWED")));
+
+        verify(vnpayClient, never()).requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
+    }
+
+    @Test
+    void forceCancelSellerItems_shouldSucceedAndRefund_whenSellerAlreadyPacked() throws Exception {
+        doReturn(VnpayRefundResult.success("VNP-SELLER-CANCEL-2"))
+                .when(vnpayClient)
+                .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
+
+        Object[] sellerInfo = becomeSellerWithId("selcancel3");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
+        Long productId = createProductWithStock(sellerToken, "selcancel3", new BigDecimal("12.00"), 5);
+        String customerToken = registerAndLogin("admin-order-customer-selcancel3@example.com", UserRole.CUSTOMER);
+        Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1200");
+
+        String adminToken = registerAndLogin("admin-order-actor-selcancel3@example.com", UserRole.ADMIN);
+        mockMvc.perform(post("/api/admin/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("CANCELLED")));
+
+        verify(vnpayClient).requestRefund(
+                anyString(), any(), any(LocalDateTime.class), org.mockito.ArgumentMatchers.eq(new BigDecimal("12.00")),
+                anyString(), anyString());
+    }
+
+    @Test
+    void forceCancelSellerItems_shouldReturn409_whenSellerAlreadyHasDelivery() throws Exception {
+        Object[] sellerInfo = becomeSellerWithId("selcancel4");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
+        Long productId = createProductWithStock(sellerToken, "selcancel4", new BigDecimal("10.00"), 5);
+        String customerToken = registerAndLogin("admin-order-customer-selcancel4@example.com", UserRole.CUSTOMER);
+        Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
+
+        registerAndLogin("admin-order-shipper-selcancel4@example.com", UserRole.SHIPPER);
+        User shipper = userRepository.findByEmail("admin-order-shipper-selcancel4@example.com").orElseThrow();
+        String adminToken = registerAndLogin("admin-order-actor-selcancel4@example.com", UserRole.ADMIN);
+
+        mockMvc.perform(patch("/api/admin/orders/" + orderId + "/assign-shipper")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(sellerId, shipper.getId()))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/admin/orders/" + orderId + "/sellers/" + sellerId + "/cancel")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code", is("ORDER_CANCEL_NOT_ALLOWED")));
+
+        verify(vnpayClient, never()).requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
     }
 }

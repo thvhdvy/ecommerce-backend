@@ -1230,6 +1230,43 @@ Nếu **tất cả seller** trong order đều bị hủy (hủy từng phần d
 còn lại — seller đã bị hủy bị loại khỏi tập tính aggregate-min (mục 10.4), tránh việc 1 seller bị
 hủy khoá aggregate ở mức thấp mãi mãi dù seller khác đã DELIVERED.
 
+#### 10.5.1 Quyết định triển khai (đã chốt, ngày 2026-08-27)
+
+- **`order_items.item_status` thêm giá trị `CANCELLED`** (`PENDING, PACKED, CANCELLED`) — không cần
+  migration DB (cột đã là `VARCHAR` không CHECK constraint). Hủy luôn áp dụng cho **toàn bộ item của
+  1 seller trong 1 lần** (không hủy từng item lẻ trong cùng 1 seller) — đúng đơn vị per-seller đã chốt.
+- **API mới, không sửa endpoint cũ**: giữ nguyên `POST /api/orders/{id}/cancel` (customer) và
+  `POST /api/admin/orders/{id}/cancel` (admin) cho đúng phạm vi cũ — hủy toàn bộ order, chỉ áp dụng
+  khi order còn `PENDING_PAYMENT` (trước khi có khái niệm seller/pack/delivery nào phát sinh). Thêm
+  endpoint mới `POST /api/orders/{id}/sellers/{sellerId}/cancel` (customer) và
+  `POST /api/admin/orders/{id}/sellers/{sellerId}/cancel` (admin) cho hủy per-seller từ `CONFIRMED`
+  trở đi. Lý do tách endpoint thay vì tái dùng 1 endpoint: ngữ nghĩa "hủy cả đơn" và "hủy phần của 1
+  seller" áp dụng ở 2 giai đoạn khác nhau của order (trước/sau khi seller bắt đầu xử lý) và có gate
+  điều kiện khác hẳn nhau — gộp chung sẽ phải nhánh if quá phức tạp trong cùng 1 action.
+- **Gate điều kiện hủy per-seller**:
+  - Customer: được hủy phần của seller X khi **còn ít nhất 1 item của seller X chưa `PACKED`** (seller
+    đó "chưa PACKED xong" — đúng câu chữ đã chốt ở đầu mục 10.5). Đã full `PACKED` → không tự hủy được.
+  - Admin: được hủy phần của seller X **miễn seller X chưa có `delivery`** (chưa được assign shipper)
+    — tức là admin có thêm quyền hủy cả khi seller đã full `PACKED`, giữ đúng bất đối xứng
+    customer/admin đã có ở v1 (mục 0.6: "PACKED trở đi customer không tự hủy — chỉ ADMIN force-cancel").
+    Một khi đã có `delivery` (seller đã ASSIGNED trở lên, tương đương v1 `SHIPPED`) — không cancel
+    được nữa kể cả admin, dùng Return/Refund flow.
+  - Cả 2 đều chặn nếu seller đó đã bị hủy trước đó (`item_status = CANCELLED` sẵn), hoặc order không
+    còn ở trạng thái đang fulfillment (`CANCELLED`/`COMPLETED`/`PENDING_PAYMENT`...).
+- **Không giải phóng tồn kho**: giống rule v1 hủy sau `CONFIRMED` (mục 0.6: `reserved` đã về 0 từ bước
+  `confirmPayment`, `available` không tự tăng lại) — áp dụng y hệt cho hủy per-seller.
+- **Refund tái dùng `PaymentService.refundPartial()` đã có sẵn cho Return module** (không thêm method
+  mới ở Payment): gọi `refundPartial(orderId, amount, reason, ip, returnRequestId=null)` — cột
+  `refunds.return_request_id` vốn đã nullable (`V21__create_return_tables.sql`), `null` hợp lệ cho
+  refund không xuất phát từ 1 `ReturnRequest`. `amount` tính bằng **đúng công thức prorate đã dùng ở
+  Return** (`ReturnServiceImpl.proratedRefundAmount`, mục 7.3): tổng `unitPriceSnapshot × quantity`
+  của các item thuộc seller đó, nhân tỷ lệ `orderTotalAmount / (orderTotalAmount + orderDiscountAmount)`.
+  Refund thất bại (`REFUND_FAILED`) đi qua đúng hàng đợi admin retry sẵn có
+  (`listFailedRefunds`/`resolveRefundManually`) — không cần cơ chế retry riêng.
+- **Không cần gọi `PayoutService`**: hủy per-seller chỉ xảy ra trước khi order `DELIVERED`, tức là
+  trước khi có bất kỳ dòng `EARNED` nào cho seller đó (`recordEarning` chỉ chạy khi order `COMPLETED`)
+  — không có gì để `recordAdjustment` trừ lại, khác với Return (luôn xảy ra sau `DELIVERED`).
+
 ### 10.6 Review eligibility
 
 Bỏ suy diễn từ `orders.status`. `order_item` đủ điều kiện review khi delivery của

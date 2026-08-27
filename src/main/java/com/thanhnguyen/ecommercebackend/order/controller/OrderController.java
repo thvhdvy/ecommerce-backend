@@ -55,4 +55,10 @@ public class OrderController {
             @AuthenticationPrincipal User currentUser, @PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.success(orderService.cancel(currentUser, id)));
     }
+
+    @PostMapping("/{id}/sellers/{sellerId}/cancel")
+    public ResponseEntity<ApiResponse<OrderResponse>> cancelSellerItems(
+            @AuthenticationPrincipal User currentUser, @PathVariable Long id, @PathVariable Long sellerId) {
+        return ResponseEntity.ok(ApiResponse.success(orderService.cancelSellerItems(currentUser, id, sellerId)));
+    }
 }

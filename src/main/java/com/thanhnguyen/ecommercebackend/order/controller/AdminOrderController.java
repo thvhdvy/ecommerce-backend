@@ -44,4 +44,10 @@ public class AdminOrderController {
             @AuthenticationPrincipal User currentUser, @PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.success(orderService.forceCancel(currentUser, id)));
     }
+
+    @PostMapping("/{id}/sellers/{sellerId}/cancel")
+    public ResponseEntity<ApiResponse<OrderResponse>> forceCancelSellerItems(
+            @AuthenticationPrincipal User currentUser, @PathVariable Long id, @PathVariable Long sellerId) {
+        return ResponseEntity.ok(ApiResponse.success(orderService.forceCancelSellerItems(currentUser, id, sellerId)));
+    }
 }
