@@ -520,12 +520,14 @@ Phase 7 quan trọng không kém các phase trước — đây là phần giúp 
 
 ### v2 — ngoài phạm vi v1 (đã quyết định hoãn, có lý do cụ thể — xem mục 0.5/0.6)
 
-- Tách shipment theo từng seller trong 1 order (thay vì 1 shipment/order).
-- Seller payout / tính hoa hồng.
-- Coupon / Promotion engine (giảm giá, điều kiện áp dụng, giới hạn lượt dùng có concurrency) — **đã thiết kế chi tiết ở mục 6**.
-- Return / Exchange flow (state machine riêng, tương tác lại với refund).
-- Notification service (email/push khi order đổi trạng thái).
-- Multi-currency.
+- Coupon / Promotion engine (giảm giá, điều kiện áp dụng, giới hạn lượt dùng có concurrency) — **đã thiết kế chi tiết ở mục 6, đã triển khai**.
+- Return / Exchange flow (state machine riêng, tương tác lại với refund) — **đã thiết kế chi tiết ở mục 7**.
+- Notification service (email khi order đổi trạng thái) — **đã thiết kế chi tiết ở mục 8**.
+- Seller payout / tính hoa hồng — **đã thiết kế chi tiết ở mục 9**.
+- Tách shipment theo từng seller trong 1 order (thay vì 1 shipment/order) — **phác thảo sơ bộ ở mục 10, thiết kế chi tiết dời tới sát lúc code** (thay đổi cấu trúc lớn nhất, rủi ro cao nhất, nên làm sau cùng).
+- Multi-currency — **phác thảo sơ bộ ở mục 11**, giá trị thấp cho project cá nhân, cân nhắc bỏ qua (xem mục 11).
+
+Thứ tự triển khai đề xuất: 7 (Return/Exchange) → 8 (Notification) → 9 (Seller payout) → 10 (Shipment split) → 11 (Multi-currency, tùy chọn) — ưu tiên theo độ độc lập với module khác và mức độ tái dùng pattern đã có, tương tự lý do đã chọn Coupon làm trước ở mục 6.
 
 ## 6. v2 — Module Coupon/Promotion (Phase 8)
 
@@ -673,3 +675,445 @@ index ở trên, đủ dùng cho tra cứu per-user).
 - Đã chọn **1 coupon/order, không stacking** — nếu có nhu cầu thật (VD coupon giảm giá + coupon
   freeship cộng dồn), đây là thiết kế lại từ đầu (thứ tự áp dụng, tổng discount tối đa), không phải
   mở rộng nhỏ từ thiết kế hiện tại.
+
+## 7. v2 — Module Return/Exchange (Phase 9)
+
+### 7.1 Phạm vi v2 (thu hẹp: chỉ Return, Exchange dời sang v3)
+
+**Quyết định thu hẹp scope trước khi thiết kế**: tên gốc trong roadmap là "Return/Exchange" nhưng
+Exchange (đổi sang sản phẩm/variant khác thay vì hoàn tiền) kéo theo một luồng riêng gần như tạo
+lại 1 order mới (chọn sản phẩm thay thế, kiểm tra tồn kho sản phẩm mới, chênh lệch giá phải thu
+thêm/hoàn lại) — độ phức tạp tương đương module Order thu nhỏ, không phải mở rộng nhỏ từ Return.
+Theo đúng nguyên tắc đã áp dụng cho Coupon (mục 6.1: thu hẹp scope để tránh nhân đôi vấn đề cũ),
+**v2 chỉ build Return (hoàn tiền), Exchange ghi nhận lùi tiếp sang v3**.
+
+- **Đơn vị return**: theo từng `order_item` (không phải toàn order) — 1 order nhiều sản phẩm, khách
+  có thể chỉ trả 1 món. Vẫn tương thích với model "1 shipment/order" của v1 vì return là 1 luồng
+  hoàn toàn mới (khách tự gửi trả qua đơn vị vận chuyển riêng, không phải chia nhỏ shipment giao
+  hàng gốc) — không đụng tới giả định "chưa tách shipment" đã chốt ở mục 0.
+- **Điều kiện được return**: order đã ở trạng thái `COMPLETED`, trong vòng `RETURN_WINDOW_DAYS`
+  (mặc định 7 ngày) kể từ thời điểm `orders.status` chuyển sang `DELIVERED` (lấy từ
+  `order_status_history`, cùng kỹ thuật đã dùng cho Report — mục 0.9 — tránh phụ thuộc
+  `updated_at` có thể bị ghi đè bởi transition khác).
+- **Reason code**: enum cố định (`DEFECTIVE`, `WRONG_ITEM`, `NOT_AS_DESCRIBED`, `CHANGED_MIND`,
+  `OTHER`) + ghi chú tự do — không phân loại chính sách hoàn tiền khác nhau theo reason ở v2 (VD
+  "lỗi từ shop thì không trừ phí ship" là bài toán riêng, ghi nhận cho v3).
+- **Duyệt thủ công**: seller/admin duyệt (`APPROVED`/`REJECTED`) — không tự động duyệt theo rule,
+  vì đánh giá "sản phẩm có thực sự lỗi" cần con người, không phải business rule máy tính được.
+- **Không có exchange, không có refund một phần theo % tùy ý** — return 1 item luôn hoàn đúng
+  `unit_price_snapshot * quantity` của item đó (không hỗ trợ trả 1 phần số lượng trong 1 dòng
+  order_item ở v2 — trả hết số lượng của dòng đó hoặc không trả).
+
+### 7.2 User Flows & Edge Cases
+
+- Khách gửi yêu cầu return cho order chưa `COMPLETED` (VD còn `SHIPPED`) → từ chối; đây thuộc case
+  "chưa nhận hàng" — dùng Cancel flow (mục 0.6), không phải Return.
+- Khách gửi yêu cầu sau khi hết `RETURN_WINDOW_DAYS` → từ chối, không có ngoại lệ tự động (muốn
+  ngoại lệ thì admin tạo return request thay khách — action riêng, xem mục 7.5).
+- Khách gửi 2 yêu cầu return cho cùng 1 `order_item` (VD request đầu bị `REJECTED`, muốn gửi lại) →
+  cho phép, miễn không có request nào đang ở trạng thái "đang xử lý" (`REQUESTED`/`APPROVED`) cho
+  chính `order_item` đó — chặn bằng unique constraint có điều kiện, cùng kỹ thuật mục 6.4.
+- Seller duyệt (`APPROVED`) nhưng khách không gửi hàng trả lại → cần cơ chế "auto-expire" giống
+  payment timeout: `APPROVED` quá `RETURN_SHIP_BACK_DAYS` (mặc định 7 ngày) không chuyển
+  `ITEM_RECEIVED` → tự động `EXPIRED` (không hoàn tiền), do scheduled job (cùng họ với
+  `OrderMaintenanceProcessor`).
+- Seller/admin xác nhận đã nhận lại hàng (`ITEM_RECEIVED`) nhưng hàng thực tế không đúng/hư hỏng
+  thêm do khách → v2 không có bước "kiểm tra chất lượng hàng trả" riêng; `ITEM_RECEIVED` ngụ ý đã
+  chấp nhận, chuyển thẳng sang hoàn tiền. Case tranh chấp phức tạp hơn (hàng trả không đúng) cần can
+  thiệp thủ công qua kênh admin thông thường, không có state riêng cho nó ở v2.
+- Return được duyệt và hoàn tiền, nhưng seller đã được payout cho order đó (module 9) → **buộc phải
+  đảo ngược ledger entry của seller** — xem tương tác chi tiết ở mục 9.4. Đây là điểm nối quan trọng
+  nhất giữa 2 module v2 mới, phải cài đặt Return trước hoặc cùng lúc với Payout để tránh nợ kỹ thuật.
+- Khách hủy yêu cầu return giữa chừng (đổi ý, không muốn trả nữa) trước khi seller duyệt → cho phép
+  tự hủy khi còn `REQUESTED`; từ `APPROVED` trở đi không tự hủy được nữa (đã tốn công seller xử lý,
+  nhất quán với nguyên tắc cancel-theo-trạng-thái của Order ở mục 0.6).
+- Refund thất bại ở bước cuối (gọi `PaymentService.refund()`) → tái dùng đúng cơ chế `REFUND_FAILED`
+  đã có (mục 0.6/0.9): `return_requests.status` dừng ở `REFUND_FAILED`, không tự lùi về trạng thái
+  trước, cần admin can thiệp qua `POST /api/admin/returns/{id}/refund/retry` (đối xứng với order
+  refund retry đã có).
+
+### 7.3 Business Rules chốt
+
+**State machine `return_requests.status` (module `return`, độc lập, không đè lên `orders.status`)**:
+
+```
+REQUESTED
+ ├── REJECTED                        (terminal — seller/admin từ chối)
+ ├── CANCELLED                       (khách tự hủy, chỉ khi còn REQUESTED)
+ └── APPROVED
+       ├── EXPIRED                   (terminal — quá hạn gửi trả, không hoàn tiền)
+       └── ITEM_RECEIVED → REFUND_PENDING → REFUNDED / REFUND_FAILED
+```
+
+Đúng nguyên tắc đã chốt cho refund cấp order (mục 0.6): **không** nhét thêm trạng thái return vào
+`orders.status` — order vẫn giữ nguyên `COMPLETED`. Toàn bộ vòng đời return sống trong bảng
+`return_requests` riêng, giống cách `refunds` độc lập với `orders`.
+
+**Mọi transition ghi vào `return_status_history`** — cùng nguyên tắc bắt buộc áp dụng cho
+`order_status_history`/`delivery_status_history` (mục 0.6).
+
+**Restock**: khi `ITEM_RECEIVED`, gọi `InventoryService.restock(productId, quantity)` — hành động
+**mới**, không tái dùng `releaseStock()` hiện có của checkout, vì bản chất khác nhau: `release`
+là "trả lại chỗ đã giữ nhưng chưa từng giao" (cộng `available`, trừ `reserved` — reserved đã về 0
+từ lâu ở case này vì order đã `CONFIRMED`), còn restock ở đây là "hàng vật lý quay lại kho sau khi
+đã bán" (chỉ cộng thẳng `available`, không đụng `reserved`). Tên hàm khác nhau để tránh nhầm 2 luồng
+nghiệp vụ khác bản chất dù cùng chạm 1 bảng.
+
+**Refund**: `ReturnService` gọi `PaymentService.refund(paymentId, amount, reason)` qua service
+interface — tái dùng nguyên bảng `refunds` và state machine `REFUND_PENDING/REFUNDED/REFUND_FAILED`
+đã có ở module Payment (mục 0.9), không tạo enum refund riêng cho return. `refunds` cần thêm cột
+tham chiếu ngược `return_request_id` (nullable, không FK — cùng quy tắc reference-only giữa các
+module giao dịch cốt lõi) để phân biệt refund do return với refund do cancel order thông thường.
+
+### 7.4 Module boundary & FK convention
+
+`return` là module giao dịch cốt lõi mới (biến động cao, tương tác Order/Payment/Inventory) — áp
+dụng đúng quy tắc đã chốt ở mục 0.8: tham chiếu tới Order/Payment bằng reference thường (không FK),
+tham chiếu tới User bằng FK thật (module nền).
+
+```
+return_requests
+- order_id (reference, không FK), order_item_id (reference, không FK)
+- user_id (FK → users.id)
+```
+
+### 7.5 API Endpoints (đề xuất)
+
+```
+RETURN (customer)
+POST   /api/returns                          (body: orderItemId, reason, note)
+GET    /api/returns                           (lịch sử return của chính mình, pagination)
+POST   /api/returns/{id}/cancel               (chỉ khi còn REQUESTED)
+
+SELLER
+GET    /api/seller/returns                    (return request cho order_item thuộc seller mình)
+PATCH  /api/seller/returns/{id}/approve
+PATCH  /api/seller/returns/{id}/reject
+PATCH  /api/seller/returns/{id}/item-received
+
+ADMIN
+GET    /api/admin/returns                     (toàn hệ thống, pagination, filter theo status)
+POST   /api/admin/returns/{id}/force-approve  (can thiệp khi seller không xử lý)
+POST   /api/admin/returns/{id}/refund/retry
+```
+
+### 7.6 Schema
+
+```
+return_requests
+- id (PK), order_id (reference, không FK), order_item_id (reference, không FK)
+- user_id (FK → users.id), seller_id (reference, không FK — snapshot từ order_item lúc tạo request)
+- reason (enum: DEFECTIVE, WRONG_ITEM, NOT_AS_DESCRIBED, CHANGED_MIND, OTHER), note (nullable)
+- refund_amount_snapshot (numeric — = order_item.unit_price_snapshot * quantity tại thời điểm tạo)
+- status (enum: REQUESTED, APPROVED, REJECTED, CANCELLED, EXPIRED, ITEM_RECEIVED,
+           REFUND_PENDING, REFUNDED, REFUND_FAILED)
+- approved_at, item_received_at, expires_at (nullable — set khi APPROVED, dùng cho auto-expire)
+- created_at, updated_at
+
+return_status_history
+- id (PK), return_request_id (FK → return_requests), from_status, to_status
+- changed_by (FK → users, nullable — null nếu hệ thống tự động, VD auto-expire)
+- reason (nullable)
+- created_at
+
+UNIQUE (order_item_id) WHERE status IN ('REQUESTED', 'APPROVED')   -- chặn 2 request đang xử lý
+                                                                     -- song song cho cùng 1 item,
+                                                                     -- cùng kỹ thuật mục 6.4
+
+refunds (thêm cột, không tạo bảng mới)
+- return_request_id (nullable, reference, không FK — phân biệt refund do return vs do cancel order)
+```
+
+### 7.7 Điểm cần bạn quyết định lại nếu không đồng ý
+
+- Đã giả định **thu hẹp scope, bỏ Exchange sang v3** — nếu Exchange là phần bắt buộc phải có (VD
+  muốn kể câu chuyện phỏng vấn về bài toán này), cần thiết kế lại từ đầu, không phải mở rộng nhỏ.
+- Đã giả định **return theo từng item, hoàn nguyên số lượng của dòng** (không hỗ trợ trả 1 phần số
+  lượng trong 1 order_item) — nếu cần hỗ trợ "mua 3 trả 1", cần thêm cột `quantity` vào
+  `return_requests` thay vì suy ra nguyên dòng.
+- Đã giả định **return window cố định 7 ngày, hardcode** (giống usage-limit 1 lần/user của Coupon)
+  — nếu cần cấu hình theo category/seller, đây là mở rộng schema (thêm cột ở `products` hoặc
+  `sellers`), không phải business logic riêng của module Return.
+
+## 8. v2 — Module Notification (Phase 10)
+
+### 8.1 Phạm vi v2 (chỉ email, chỉ theo trạng thái đơn hàng — không push, không SMS)
+
+- **Kênh duy nhất**: email. Push notification/SMS cần thêm hạ tầng (FCM, SMS gateway) không phục vụ
+  mục tiêu luyện backend cốt lõi của project — ghi nhận cho v3 nếu cần.
+- **Sự kiện kích hoạt (v2)**: `orders.status` chuyển sang `CONFIRMED`, `SHIPPED`, `DELIVERED`,
+  `CANCELLED`; `refunds.status` chuyển `REFUNDED`. Không bao gồm mọi transition nhỏ (VD
+  `PACKED` không cần email) — chỉ những mốc khách hàng thực sự quan tâm.
+- **Không có in-app notification list** ở v2 (không cần bảng đọc/chưa đọc kiểu "thông báo trong
+  app") — chỉ gửi email, endpoint duy nhất phía user là xem "email đã gửi cho tôi chưa" gián tiếp
+  qua chính hộp thư, không qua API.
+- **Không đảm bảo delivery thật (không tích hợp SMTP thật ở giai đoạn dev)** — dùng
+  Mailhog/Mailtrap (SMTP giả lập) để có thể demo đầy đủ luồng mà không cần domain email thật; kiến
+  trúc gửi/retry vẫn giống hệt production, chỉ khác nơi email "hạ cánh".
+
+### 8.2 User Flows & Edge Cases
+
+- Order đổi trạng thái nhưng gửi email thất bại (SMTP timeout, provider lỗi) → **không được làm
+  transaction nghiệp vụ chính (đổi order status) rollback theo** — đây là bài học đã áp dụng cho VNPay
+  (mục "REQUIRES_NEW... network calls must never run inside the same transaction as row locks", xem
+  Key Technical Concepts) và lặp lại y hệt ở đây: ghi nhận thất bại, cho retry sau, không chặn luồng
+  chính.
+- Cùng 1 order đổi trạng thái 2 lần liên tiếp rất nhanh (VD do admin sửa tay rồi sửa lại) → mỗi
+  transition tạo 1 dòng `notifications` riêng, **không** gộp/dedupe — chấp nhận khách nhận 2 email,
+  đơn giản hơn cơ chế gộp thông minh mà lợi ích không tương xứng ở quy mô project.
+  cần retry đến khi đạt `MAX_ATTEMPTS` (mặc định 5) rồi dừng, đánh dấu `FAILED` vĩnh viễn — không
+  retry vô hạn (tránh lấp đầy queue bởi 1 địa chỉ email luôn bounce).
+- Email gửi thành công nhưng job crash trước khi ghi lại `status = SENT` → worker chạy lại đọc thấy
+  dòng vẫn `PENDING`, gửi lại → **duplicate email possible, chấp nhận đánh đổi** (tương tự nguyên
+  tắc "at-least-once" IPN, khác ở chỗ hậu quả ở đây chỉ là khách nhận email trùng, không phải tiền —
+  mức độ nghiêm trọng thấp hơn nhiều, không cần cơ chế exactly-once tốn kém).
+- User đổi email sau khi order đã tạo → gửi tới email tại **thời điểm gửi** (đọc `users.email` hiện
+  tại qua `UserService`, không snapshot email lúc tạo order) — khác với coupon/order vốn snapshot
+  giá/thông tin giao hàng, vì thông báo luôn nên tới đúng địa chỉ liên hệ hiện tại của khách, không
+  phải "đóng băng lịch sử".
+
+### 8.3 Business Rules chốt — kiến trúc outbox + scheduled worker
+
+**Không gửi email đồng bộ ngay trong request** (VD gọi thẳng `JavaMailSender.send()` bên trong
+`OrderServiceImpl.confirmPayment()`) — vì (a) email chậm/không ổn định, làm chậm response chính, và
+(b) lỗi gửi email không được phép làm rollback nghiệp vụ chính đã hoàn tất. Thay vào đó dùng
+**outbox pattern**, tái dùng đúng tinh thần scheduled-worker đã kiểm chứng ở Payment
+timeout/`OrderMaintenanceProcessor`:
+
+1. Module Order/Payment publish domain event nội bộ qua `ApplicationEventPublisher` (đã được cho
+   phép ở mục 0.8 cho side-effect nội bộ) — VD `OrderConfirmedEvent(orderId)`.
+2. `NotificationListener` lắng nghe qua `@TransactionalEventListener(phase = BEFORE_COMMIT)`, ghi
+   1 dòng vào bảng `notifications` (status `PENDING`) — **cùng transaction** với thay đổi trạng thái
+   order, đảm bảo không bao giờ "đổi status thành công nhưng quên ghi outbox" (khác với gửi email
+   trực tiếp — outbox insert là thao tác DB thuần, không phải network call, nên an toàn nằm chung
+   transaction, đúng nguyên tắc "chỉ tách transaction khi có network call thật").
+3. `NotificationDispatcher` (scheduled job, cùng họ với `OrderMaintenanceProcessor`) định kỳ quét
+   `notifications WHERE status = 'PENDING' AND next_retry_at <= now()`, gửi qua `EmailSender`
+   (interface bọc `JavaMailSender`), cập nhật `SENT`/tăng `attempt_count` + tính lại `next_retry_at`
+   (exponential backoff) nếu thất bại, `FAILED` khi vượt `MAX_ATTEMPTS`.
+4. Việc gửi email thật (bước 3) chạy trong transaction `REQUIRES_NEW` riêng cho từng dòng, giống hệt
+   pattern đã dùng cho refund/payment-result-applier (mục Key Technical Concepts) — 1 email lỗi
+   không kéo rollback cả batch.
+
+**Giao tiếp module**: Order/Payment module không phụ thuộc trực tiếp vào Notification module (không
+import `NotificationService` vào `OrderServiceImpl`) — chỉ publish event nội bộ, Notification module
+tự lắng nghe. Đây là ngoại lệ hợp lý duy nhất khác Report được phép "không gọi qua service interface
+trực tiếp", vì bản chất là thông báo side-effect, không phải đọc/ghi dữ liệu nghiệp vụ — giữ đúng
+tinh thần "module khác không biết Notification tồn tại" (loose coupling tối đa cho 1 module thuần
+side-effect).
+
+### 8.4 API Endpoints (đề xuất — tối thiểu)
+
+```
+ADMIN (chỉ để vận hành/debug, không có API phía customer ở v2)
+GET    /api/admin/notifications                (pagination, filter theo status — xem cái nào FAILED)
+POST   /api/admin/notifications/{id}/retry     (reset attempt_count, next_retry_at = now, cho job
+                                                 nhặt lại ở lượt quét kế tiếp)
+```
+
+### 8.5 Schema
+
+```
+notifications
+- id (PK), user_id (FK → users.id)
+- type (enum: ORDER_CONFIRMED, ORDER_SHIPPED, ORDER_DELIVERED, ORDER_CANCELLED, ORDER_REFUNDED)
+- channel (enum: EMAIL — chừa chỗ mở rộng kênh khác ở v3, không xử lý logic khác kênh ở v2)
+- reference_id (reference, không FK — order_id hoặc refund_id tùy `type`, chỉ để trace/debug)
+- payload (JSON — template variables đã snapshot, VD tên khách, mã đơn, số tiền — không query lại
+  dữ liệu gốc lúc gửi để tránh trường hợp order đã đổi tiếp sau đó làm sai lệch nội dung email)
+- status (enum: PENDING, SENT, FAILED)
+- attempt_count (int, default 0), next_retry_at (nullable, default now())
+- created_at, sent_at (nullable)
+```
+
+Index gợi ý: `notifications(status, next_retry_at)` — phục vụ trực tiếp query của scheduled worker.
+
+### 8.6 Điểm cần bạn quyết định lại nếu không đồng ý
+
+- Đã giả định **dùng Mailhog/SMTP giả lập cho dev, không cần domain email thật** — nếu muốn demo
+  bằng email thật (VD portfolio cho nhà tuyển dụng tự thử), cần đăng ký SMTP provider thật (SendGrid
+  free tier, Gmail SMTP...) và xử lý thêm rate limit của provider đó.
+- Đã giả định **không có in-app notification list** — nếu muốn có, cần thêm field `read_at` và API
+  `GET /api/notifications/me`, việc mở rộng không lớn nhưng là quyết định phạm vi cần xác nhận.
+
+## 9. v2 — Module Seller Payout (Phase 11)
+
+### 9.1 Phạm vi v2 (ghi nhận công nợ — không tích hợp chuyển tiền thật)
+
+**Giới hạn quan trọng nhất phải chốt trước khi thiết kế**: đây là project cá nhân, **không** tích
+hợp cổng thanh toán ra (payout API thật của VNPay hay chuyển khoản ngân hàng) — phạm vi v2 dừng ở
+**ghi nhận đúng số tiền seller được hưởng và trạng thái đã trả/chưa trả**, việc "trả tiền" là hành
+động ngoài hệ thống (admin chuyển khoản thủ công rồi bấm xác nhận). Đây là quyết định thu hẹp scope
+tương tự Coupon/Return đã làm, tránh biến project thành tích hợp payment-gateway lần 2.
+
+- **Hoa hồng**: tỷ lệ % cố định toàn hệ thống (`PLATFORM_COMMISSION_RATE`, cấu hình qua
+  `application.yml`, không phải theo từng seller/category ở v2 — per-seller rate là mở rộng v3).
+- **Thời điểm ghi nhận công nợ**: khi `orders.status` chuyển `COMPLETED` (đúng nguồn sự thật đã dùng
+  cho Report ở mục 0.9: đọc `order_status_history` chứ không phải `orders.updated_at`).
+- **Chu kỳ payout**: theo lô (batch) do admin chủ động trigger cho 1 khoảng thời gian (VD "chốt sổ
+  tháng 1"), **không** tự động chạy theo lịch cố định ở v2 — admin cần soát trước khi chốt (đặc biệt
+  vì Return có thể phát sinh sau `COMPLETED`, xem 9.4).
+
+### 9.2 User Flows & Edge Cases
+
+- 1 order có sản phẩm từ nhiều seller → mỗi seller có 1 dòng ledger riêng cho phần của mình (không
+  gộp), tính trên tổng `unit_price_snapshot * quantity` của các `order_item` thuộc seller đó trong
+  order — nhất quán với việc `order_items` đã có sẵn `seller_id` reference từ v1 (mục 0, extension
+  point đã chừa sẵn).
+- Order `COMPLETED` rồi sau đó có Return được `REFUNDED` (mục 7) → ledger entry gốc của seller đó
+  phải bị điều chỉnh giảm tương ứng, xem chi tiết 9.4 — đây là lý do v2 payout **không** tự động trả
+  tiền ngay khi `COMPLETED`, phải chờ đủ return-window rồi mới generate batch (khuyến nghị admin đợi
+  qua `RETURN_WINDOW_DAYS` của mục 7 rồi mới chốt sổ tháng, dù hệ thống không cấm chốt sớm hơn).
+- Admin generate payout batch 2 lần cho cùng 1 khoảng thời gian → lần 2 chỉ gom các ledger entry
+  `EARNED` **chưa** thuộc payout nào (`seller_ledger_entries.payout_id IS NULL`) — không double-pay,
+  không cần validate thủ công khoảng ngày có bị trùng hay không.
+- Seller bị khóa (`sellers.status = LOCKED`) nhưng vẫn còn ledger entry `EARNED` chưa trả → vẫn cho
+  phép generate/trả payout bình thường (khóa tài khoản bán hàng không đồng nghĩa xóa nợ) — chỉ chặn
+  seller đăng sản phẩm mới/nhận order mới, không liên quan tới công nợ cũ.
+- Order bị hủy sau `COMPLETED` mà **không qua Return** (về lý thuyết không xảy ra theo state machine
+  mục 0.6 — `SHIPPED`/`DELIVERED`/`COMPLETED` không cancel trực tiếp) → không cần xử lý, state
+  machine đã chặn từ gốc.
+
+### 9.3 Business Rules chốt
+
+**`seller_ledger_entries`**: 1 dòng / (`order_id`, `seller_id`) — unique constraint chặn tạo trùng
+nếu event `COMPLETED` vô tình publish 2 lần (idempotency, cùng tinh thần `payment_webhook_events`).
+Mỗi dòng chốt cứng `gross_amount`, `commission_amount` (= `gross_amount * PLATFORM_COMMISSION_RATE`
+tại thời điểm tạo — đổi rate sau này không ảnh hưởng ledger đã chốt), `net_amount = gross - commission`.
+
+**`seller_payouts`**: 1 lần generate = 1 dòng, gom toàn bộ `seller_ledger_entries` đang
+`status = EARNED AND payout_id IS NULL` **của 1 seller** trong khoảng `period_start..period_end`
+(theo `order_status_history.created_at` của lần `COMPLETED`) vào 1 payout, set `payout_id` cho các
+ledger entry đó, cộng tổng thành `seller_payouts.total_amount`. Payout tạo ra ở `status = PENDING`,
+admin xác nhận đã chuyển khoản thật → `PAID` (`paid_at = now()`) — thao tác thủ công, không có
+webhook nào cập nhật tự động vì không tích hợp cổng chuyển tiền thật (mục 9.1).
+
+### 9.4 Tương tác với Return (mục 7) — điểm phức tạp nhất
+
+Khi 1 Return được `REFUNDED` cho `order_item` mà ledger entry chứa nó **đã** thuộc về 1 payout
+`PAID` rồi (seller đã được trả), hệ thống **không** đòi lại tiền tự động (không có cơ chế thu hồi
+tiền đã chuyển khoản thật ở v2) — thay vào đó:
+
+- Tạo 1 dòng `seller_ledger_entries` mới với `status = ADJUSTED`, `net_amount` âm (giá trị đúng bằng
+  phần bị hoàn trả tương ứng của seller đó), `payout_id = NULL` (chưa thuộc payout nào).
+- Dòng `ADJUSTED` âm này được gom vào batch payout **kế tiếp** của seller đó — trừ thẳng vào tổng
+  tiền lần trả tiếp theo (giống nguyên tắc "trừ lương kỳ sau" thay vì đòi hoàn ngay).
+- Nếu ledger entry gốc **chưa** thuộc payout nào (`payout_id IS NULL`, seller chưa được trả) →
+  chỉ cần đổi thẳng `status` của dòng gốc thành `VOIDED` (không tạo dòng điều chỉnh riêng) — đơn
+  giản hơn vì chưa có gì phải "trừ ngược".
+
+Đây là lý do mục 7.2 ghi rõ "phải cài Return trước hoặc cùng lúc với Payout" — nếu cài Payout trước
+mà chưa có Return, sẽ không có chỗ neo cho luồng `ADJUSTED` này, dễ dẫn tới thiết kế lại giữa chừng.
+
+### 9.5 API Endpoints (đề xuất)
+
+```
+SELLER
+GET    /api/seller/ledger                      (lịch sử ghi nhận công nợ của chính mình, pagination)
+GET    /api/seller/payouts                     (lịch sử các lần đã/sẽ được trả, pagination)
+
+ADMIN
+POST   /api/admin/payouts/generate             (body: periodStart, periodEnd — tạo payout cho TẤT
+                                                 CẢ seller có ledger entry EARNED trong kỳ, mỗi
+                                                 seller 1 payout riêng)
+GET    /api/admin/payouts                      (pagination, filter theo status/seller)
+PATCH  /api/admin/payouts/{id}/mark-paid
+```
+
+### 9.6 Schema
+
+```
+seller_ledger_entries
+- id (PK), seller_id (reference, không FK — cùng nhóm module giao dịch cốt lõi như order_items)
+- order_id (reference, không FK), payout_id (nullable reference tới seller_payouts.id, không FK)
+- gross_amount (numeric), commission_amount (numeric), net_amount (numeric)
+- status (enum: EARNED, ADJUSTED, VOIDED)
+- return_request_id (nullable, reference, không FK — chỉ có giá trị khi status = ADJUSTED, trace về
+  return nào gây ra điều chỉnh)
+- created_at
+
+UNIQUE (order_id, seller_id) WHERE status = 'EARNED'   -- chặn double-ghi-nhận cho cùng 1 order/seller
+
+seller_payouts
+- id (PK), seller_id (reference, không FK)
+- period_start, period_end, total_amount (numeric)
+- status (enum: PENDING, PAID)
+- paid_at (nullable), created_at
+```
+
+Ghi chú FK: `seller_id` ở đây **không** dùng FK dù `sellers` là module nền (khác với `products.seller_id`
+vốn có FK thật) — vì `seller_ledger_entries`/`seller_payouts` bản thân là dữ liệu giao dịch/tài
+chính biến động cao (cùng nhóm với Order/Payment), áp dụng quy tắc theo bản chất bảng đang xét chứ
+không phải theo module đích tham chiếu tới. Cần bạn xác nhận lại cách hiểu này ở mục 9.7 nếu muốn
+diễn giải khác.
+
+### 9.7 Điểm cần bạn quyết định lại nếu không đồng ý
+
+- Đã giả định **hoa hồng % cố định toàn hệ thống** — nếu cần theo từng seller/category, thêm cột
+  `commission_rate` vào `sellers` hoặc `categories`, không đổi cấu trúc ledger.
+- Đã giả định **không tích hợp chuyển tiền thật** (chỉ ghi nhận + đánh dấu thủ công) — nếu muốn tích
+  hợp thật (VD VNPay có API chuyển tiền cho merchant), đây là tích hợp mới hoàn toàn, độ phức tạp
+  tương đương module Payment ban đầu.
+- Đã giả định **`seller_id` trong ledger/payout không FK** (xem 9.6) — nếu bạn cho rằng bảng tài
+  chính vẫn nên FK cứng tới `sellers` vì đây không phải bảng "core transactional biến động" theo
+  đúng tinh thần mục 0.8 (nó không có khả năng tách microservice độc lập như Order/Payment), có thể
+  đổi lại — đây là điểm diễn giải quy tắc FK chưa từng gặp trước đó, cần chốt tường minh.
+
+## 10. v2 — Shipment theo từng Seller (Phase 12, phác thảo sơ bộ)
+
+### 10.1 Vì sao chỉ phác thảo, không thiết kế chi tiết ngay
+
+Đây là thay đổi cấu trúc lớn nhất trong toàn bộ roadmap v2: nó phá vỡ giả định nền tảng
+"1 order = 1 shipment" đã thấm vào nhiều quyết định v1 (xem danh sách phá vỡ ở 10.2). Thiết kế chi
+tiết ngay bây giờ (trước khi Return/Notification/Payout ổn định) có rủi ro phải sửa lại nhiều lần vì
+2 module đó cũng chạm tới đúng những bảng bị ảnh hưởng (`orders`, `order_items`, `deliveries`) — làm
+lúc này dễ tạo ra thiết kế "đoán trước" sai. Quyết định: **giữ lại nguyên bản ghi chú roadmap, thiết
+kế chi tiết đầy đủ (schema, state machine, migration) ngay trước khi bắt tay code module này**, sau
+khi mục 7-9 đã triển khai và ổn định.
+
+### 10.2 Những giả định v1 sẽ bị phá vỡ (ghi nhận trước, chưa giải quyết)
+
+- **Aggregate rule `CONFIRMED → PACKED`** (mục 0.6: "100% order_items đã PACKED") phải tách theo
+  từng nhóm seller — mỗi seller có shipment riêng, tiến độ đóng gói độc lập.
+- **`deliveries` 1:1 với `orders`** (mục 0.9: `order_id UNIQUE`) phải đổi thành 1:N (1 order nhiều
+  delivery, mỗi delivery gắn 1 seller).
+- **Review eligibility suy từ `orders.status`** (mục 0.6: "vì v1 chỉ có 1 shipment/order... mọi item
+  đủ điều kiện review cùng lúc") phải đổi sang tính theo trạng thái giao hàng thật của từng item.
+- **Refund/Cancel theo order** (mục 0.6, 0.5 Flow 5: "refund một phần order... để v2") cần xác định
+  lại đơn vị hủy — hủy theo shipment hay theo item, ảnh hưởng cách tính `refunds.amount`.
+- **`order_status_history` cấp order** cần cân nhắc có cần thêm `order_status_history` cấp shipment
+  hay tái dùng `delivery_status_history` đã có sẵn cấu trúc tương tự.
+
+### 10.3 Hướng đi dự kiến (chưa chốt, chỉ để định hướng)
+
+Nhiều khả năng cần 1 bảng trung gian `shipments` (thay thế vai trò hiện tại của `deliveries` ở cấp
+"nhóm theo seller", `deliveries` giữ nguyên là chi tiết vận chuyển vật lý nhưng tham chiếu tới
+`shipment_id` thay vì `order_id` trực tiếp) và tách `order_items.item_status` chi tiết hơn
+(`PENDING/PACKED/SHIPPED/DELIVERED` ở cấp item thay vì chỉ `PENDING/PACKED`). Đây **không phải**
+quyết định chốt — chỉ ghi lại hướng nghĩ để không bắt đầu lại từ số 0 khi tới lúc thiết kế thật.
+
+## 11. v2 — Multi-currency (phác thảo sơ bộ, cân nhắc bỏ qua)
+
+### 11.1 Đánh giá giá trị trước khi đầu tư thiết kế
+
+Khác với 4 mục trên, multi-currency **không có nhu cầu nghiệp vụ thật** cho 1 project cá nhân
+(không có khách hàng đa quốc gia thật) và giá trị phỏng vấn thấp hơn hẳn — "biết lưu currency code
+cạnh amount" là kiến thức cơ bản, không phải bài toán khó đủ để kể chuyện behavioral như concurrency
+hay idempotency đã có. Khuyến nghị: **cân nhắc bỏ hẳn mục này khỏi roadmap**, dành thời gian cho
+việc đào sâu 4 module trên (VD viết thêm test, benchmark, tài liệu vận hành) thay vì dàn trải.
+
+### 11.2 Nếu vẫn muốn làm (phạm vi tối thiểu, không có FX thật)
+
+- Thêm cột `currency` (`CHAR(3)`, ISO 4217, default `'VND'`) vào `orders`, `payments`, `refunds`,
+  `coupons` (cho `discount_value` khi `FIXED_AMOUNT`), `seller_ledger_entries`.
+- **Không tích hợp tỷ giá hối đoái thật** (không gọi API tỷ giá, không quy đổi qua lại) — mỗi order
+  chốt cứng 1 currency tại thời điểm tạo, toàn bộ tính toán liên quan (refund, ledger, coupon) đều
+  cùng currency với order gốc, validate chặn nếu lệch (VD không cho refund USD cho payment VND).
+- Đây chỉ là "gắn nhãn", không phải "hỗ trợ đa tiền tệ" theo nghĩa đầy đủ (chưa xử lý hiển thị theo
+  ngôn ngữ/locale, chưa xử lý sàn giao dịch nào chấp nhận currency nào) — nếu tương lai cần thật,
+  đây sẽ là 1 module riêng (`fx/` hoặc tích hợp bên thứ 3), không phải mở rộng nhỏ từ cột `currency`.
+
+### 11.3 Cần bạn quyết định
+
+- Có làm mục này không, hay bỏ khỏi roadmap? Nếu bỏ, cập nhật lại mục Roadmap (mục 5) để không còn
+  liệt kê nó như 1 phase cần làm.
