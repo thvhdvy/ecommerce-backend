@@ -1151,38 +1151,91 @@ nếu muốn diễn giải khác.
   ngược platform — nếu cần chặn seller đăng sản phẩm mới hoặc cảnh báo admin khi balance âm quá lâu,
   đây là business rule bổ sung chưa có trong v2 (liên quan `sellers.status`, ngoài phạm vi module này).
 
-## 10. v2 — Shipment theo từng Seller (Phase 12, phác thảo sơ bộ)
+## 10. v2 — Shipment theo từng Seller (Phase 12)
 
-### 10.1 Vì sao chỉ phác thảo, không thiết kế chi tiết ngay
+### 10.1 Bối cảnh
 
 Đây là thay đổi cấu trúc lớn nhất trong toàn bộ roadmap v2: nó phá vỡ giả định nền tảng
-"1 order = 1 shipment" đã thấm vào nhiều quyết định v1 (xem danh sách phá vỡ ở 10.2). Thiết kế chi
-tiết ngay bây giờ (trước khi Return/Notification/Payout ổn định) có rủi ro phải sửa lại nhiều lần vì
-2 module đó cũng chạm tới đúng những bảng bị ảnh hưởng (`orders`, `order_items`, `deliveries`) — làm
-lúc này dễ tạo ra thiết kế "đoán trước" sai. Quyết định: **giữ lại nguyên bản ghi chú roadmap, thiết
-kế chi tiết đầy đủ (schema, state machine, migration) ngay trước khi bắt tay code module này**, sau
-khi mục 7-9 đã triển khai và ổn định.
+"1 order = 1 shipment" đã thấm vào nhiều quyết định v1. Theo đúng kế hoạch ban đầu, thiết kế chi
+tiết được dời tới sau khi mục 7-9 (Return, Notification, Payout) đã triển khai và ổn định — điều
+kiện đó đã đạt (xem mục 6-9), nên thiết kế chi tiết dưới đây **đã chốt**, chuẩn bị để code.
 
-### 10.2 Những giả định v1 sẽ bị phá vỡ (ghi nhận trước, chưa giải quyết)
+### 10.2 Quyết định nền tảng (đã chốt, ngày 2026-08-27)
 
-- **Aggregate rule `CONFIRMED → PACKED`** (mục 0.6: "100% order_items đã PACKED") phải tách theo
-  từng nhóm seller — mỗi seller có shipment riêng, tiến độ đóng gói độc lập.
-- **`deliveries` 1:1 với `orders`** (mục 0.9: `order_id UNIQUE`) phải đổi thành 1:N (1 order nhiều
-  delivery, mỗi delivery gắn 1 seller).
-- **Review eligibility suy từ `orders.status`** (mục 0.6: "vì v1 chỉ có 1 shipment/order... mọi item
-  đủ điều kiện review cùng lúc") phải đổi sang tính theo trạng thái giao hàng thật của từng item.
-- **Refund/Cancel theo order** (mục 0.6, 0.5 Flow 5: "refund một phần order... để v2") cần xác định
-  lại đơn vị hủy — hủy theo shipment hay theo item, ảnh hưởng cách tính `refunds.amount`.
-- **`order_status_history` cấp order** cần cân nhắc có cần thêm `order_status_history` cấp shipment
-  hay tái dùng `delivery_status_history` đã có sẵn cấu trúc tương tự.
+- **Không thêm bảng `shipments` trung gian.** `deliveries` được mở rộng thẳng thành 1:N với
+  `orders` (thêm `seller_id`), thay vì tách vai trò "nhóm theo seller" ra một bảng riêng như hướng
+  phác thảo ban đầu từng cân nhắc — đơn giản hơn, vì `deliveries` vốn đã đúng là đơn vị "1 seller
+  trong 1 order" một khi bỏ UNIQUE trên `order_id`.
+- **Đơn vị hủy/refund = per-seller** (không phải per-item, không phải per-order).
+- **`orders.status` = aggregate-min qua các seller** trong order đó (chi tiết mục 10.4).
 
-### 10.3 Hướng đi dự kiến (chưa chốt, chỉ để định hướng)
+### 10.3 Schema delta
 
-Nhiều khả năng cần 1 bảng trung gian `shipments` (thay thế vai trò hiện tại của `deliveries` ở cấp
-"nhóm theo seller", `deliveries` giữ nguyên là chi tiết vận chuyển vật lý nhưng tham chiếu tới
-`shipment_id` thay vì `order_id` trực tiếp) và tách `order_items.item_status` chi tiết hơn
-(`PENDING/PACKED/SHIPPED/DELIVERED` ở cấp item thay vì chỉ `PENDING/PACKED`). Đây **không phải**
-quyết định chốt — chỉ ghi lại hướng nghĩ để không bắt đầu lại từ số 0 khi tới lúc thiết kế thật.
+```
+deliveries (thay đổi so với v1 — xem mục 0.9)
+- id (PK)
+- order_id (reference, không FK)
+- seller_id (reference, không FK — cùng nhóm với order_items.seller_id)
+- shipper_id (FK → users.id, nullable)
+- status (enum: ASSIGNED, IN_TRANSIT, DELIVERED, FAILED)   -- không đổi
+- failure_reason, retry_count, assigned_at, picked_up_at, delivered_at   -- không đổi
+- created_at, updated_at
+
+UNIQUE (order_id, seller_id)   -- thay cho UNIQUE(order_id) cũ: 1 seller/order = 1 delivery
+```
+
+`order_items` và `delivery_status_history` **không đổi schema**. Packing vốn đã ở cấp item
+(`item_status`: PENDING/PACKED), và `delivery_status_history` vốn đã khoá theo `delivery_id` riêng
+từng delivery — không cần thêm cột `item_status` cấp SHIPPED/DELIVERED như hướng phác thảo cũ từng
+nghĩ tới, vì 1 delivery = trọn bộ items của 1 seller nên trạng thái giao hàng của 1 item luôn suy ra
+được từ delivery của seller đó (giữ nguyên tắc "không lưu dữ liệu suy diễn được" đã áp dụng ở v1).
+
+### 10.4 State machine — aggregate rule theo seller
+
+**Gate tạo delivery (nới lỏng so với v1):** Aggregate rule `CONFIRMED → PACKED` tính **theo từng
+seller độc lập** — khi 100% `order_items` của seller X đã PACKED, admin được phép tạo/assign
+`delivery` cho seller X, bất kể seller Y đã xong chưa. Đây là giá trị thật của việc tách shipment:
+seller nhanh không còn bị seller chậm nhất khoá lại (khác nhược điểm v1 đã ghi nhận ở mục 0.6:
+"seller chậm nhất quyết định thời điểm cả order sẵn sàng ship").
+
+**`orders.status` = aggregate-min qua các seller.** Thứ hạng (thấp → cao):
+`CONFIRMED(0) < PACKED(1) < SHIPPED(2) < DELIVERED(3)`. `orders.status` = hạng **thấp nhất** trong
+tất cả seller của order, trong đó seller chưa pack xong tính là hạng `CONFIRMED`.
+
+- Delivery `ASSIGNED`/`IN_TRANSIT` → seller đó ở hạng `SHIPPED`.
+- Delivery `DELIVERED` → seller đó ở hạng `DELIVERED`.
+- Delivery `FAILED` (còn lượt retry) → tính là hạng `SHIPPED` (không kéo lùi cả order — seller đó
+  vẫn "đang trong quá trình giao", chỉ đang retry).
+- Seller đã terminal (bị cancel/refund — xem 10.5) → **loại khỏi tập tính aggregate-min**, không
+  tính vào thứ hạng thấp nhất nữa.
+- `orders.status = DELIVERED` chỉ khi **tất cả** seller còn lại (chưa terminal) đều `DELIVERED` →
+  job auto-complete 3 ngày chỉ chạy khi order đạt hạng này.
+
+**`order_status_history` cho transition suy ra từ aggregate** (PACKED/SHIPPED/DELIVERED cấp order):
+`changed_by = null`, vì đây là kết quả tổng hợp hành động của **nhiều actor** (nhiều seller/shipper
+khác nhau), không quy về 1 actor cụ thể — khác với CONFIRMED/CANCELLED/COMPLETED vẫn giữ nguyên
+convention actor đã chốt ở mục 0.6.
+
+Không cần bảng `order_status_history` cấp shipment riêng — tái dùng `delivery_status_history` sẵn
+có (đã đúng cấu trúc, khoá theo `delivery_id`) làm nguồn sự thật cho lịch sử trạng thái từng seller.
+
+### 10.5 Cancel/Refund — đơn vị per-seller
+
+Cancel policy đổi từ "theo order" sang "theo (order, seller)": customer được tự hủy phần hàng của
+seller X **miễn seller X chưa PACKED xong** (không quan tâm seller Y đã tới đâu). Hủy 1 phần →
+`refunds.amount` chỉ tính tổng `order_items` của seller đó (snapshot giá), không phải toàn order.
+
+Nếu **tất cả seller** trong order đều bị hủy (hủy từng phần dồn hết) → order-level mới chuyển hẳn
+`CANCELLED`. Hủy một phần thì `orders.status` (aggregate-min) vẫn phản ánh tiến độ của các seller
+còn lại — seller đã bị hủy bị loại khỏi tập tính aggregate-min (mục 10.4), tránh việc 1 seller bị
+hủy khoá aggregate ở mức thấp mãi mãi dù seller khác đã DELIVERED.
+
+### 10.6 Review eligibility
+
+Bỏ suy diễn từ `orders.status`. `order_item` đủ điều kiện review khi delivery của
+`(order_id, order_item.seller_id)` có `status = DELIVERED`. Review module gọi
+`ShippingService.isDeliveredForSeller(orderId, sellerId)` qua service interface (đúng nguyên tắc
+module chỉ gọi nhau qua interface, không query thẳng repository/entity module khác).
 
 ## 11. v2 — Multi-currency (đã quyết định bỏ khỏi roadmap)
 
