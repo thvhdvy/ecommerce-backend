@@ -691,10 +691,13 @@ Theo đúng nguyên tắc đã áp dụng cho Coupon (mục 6.1: thu hẹp scope
   có thể chỉ trả 1 món. Vẫn tương thích với model "1 shipment/order" của v1 vì return là 1 luồng
   hoàn toàn mới (khách tự gửi trả qua đơn vị vận chuyển riêng, không phải chia nhỏ shipment giao
   hàng gốc) — không đụng tới giả định "chưa tách shipment" đã chốt ở mục 0.
-- **Điều kiện được return**: order đã ở trạng thái `COMPLETED`, trong vòng `RETURN_WINDOW_DAYS`
-  (mặc định 7 ngày) kể từ thời điểm `orders.status` chuyển sang `DELIVERED` (lấy từ
-  `order_status_history`, cùng kỹ thuật đã dùng cho Report — mục 0.9 — tránh phụ thuộc
-  `updated_at` có thể bị ghi đè bởi transition khác).
+- **Điều kiện được return**: order đã ở trạng thái `DELIVERED` **hoặc** `COMPLETED` — cố ý dùng
+  đúng 2 trạng thái này, nhất quán với Review eligibility đã chốt (mục 0.6: "cho phép review khi
+  order_item... DELIVERED", suy ra từ `orders.status = DELIVERED/COMPLETED`). Bắt khách chờ tới khi
+  `COMPLETED` (tự động sau 3 ngày) mới được gửi yêu cầu return là ma sát không cần thiết và không có
+  lý do nghiệp vụ để khắt khe hơn Review. Trong vòng `RETURN_WINDOW_DAYS` (mặc định 7 ngày) kể từ
+  thời điểm `orders.status` chuyển sang `DELIVERED` (lấy từ `order_status_history`, cùng kỹ thuật đã
+  dùng cho Report — mục 0.9 — tránh phụ thuộc `updated_at` có thể bị ghi đè bởi transition khác).
 - **Reason code**: enum cố định (`DEFECTIVE`, `WRONG_ITEM`, `NOT_AS_DESCRIBED`, `CHANGED_MIND`,
   `OTHER`) + ghi chú tự do — không phân loại chính sách hoàn tiền khác nhau theo reason ở v2 (VD
   "lỗi từ shop thì không trừ phí ship" là bài toán riêng, ghi nhận cho v3).
@@ -706,8 +709,11 @@ Theo đúng nguyên tắc đã áp dụng cho Coupon (mục 6.1: thu hẹp scope
 
 ### 7.2 User Flows & Edge Cases
 
-- Khách gửi yêu cầu return cho order chưa `COMPLETED` (VD còn `SHIPPED`) → từ chối; đây thuộc case
-  "chưa nhận hàng" — dùng Cancel flow (mục 0.6), không phải Return.
+- Khách gửi yêu cầu return khi order chưa tới `DELIVERED` (VD còn `SHIPPED`) → từ chối, thuộc case
+  "chưa nhận hàng thật sự". **Lưu ý**: đây **không** phải lúc dùng Cancel flow thay thế — Cancel
+  policy (mục 0.6) đã chốt rõ từ `PACKED` trở đi khách không còn tự hủy được nữa, nên ở khoảng
+  `PACKED`–`SHIPPED` khách **không có hành động nào khả dụng**, chỉ có thể chờ hàng tới hoặc chờ admin
+  can thiệp qua kênh hỗ trợ thông thường — không phải giới hạn riêng của module Return.
 - Khách gửi yêu cầu sau khi hết `RETURN_WINDOW_DAYS` → từ chối, không có ngoại lệ tự động (muốn
   ngoại lệ thì admin tạo return request thay khách — action riêng, xem mục 7.5).
 - Khách gửi 2 yêu cầu return cho cùng 1 `order_item` (VD request đầu bị `REJECTED`, muốn gửi lại) →
@@ -765,6 +771,35 @@ interface — tái dùng nguyên bảng `refunds` và state machine `REFUND_PEND
 tham chiếu ngược `return_request_id` (nullable, không FK — cùng quy tắc reference-only giữa các
 module giao dịch cốt lõi) để phân biệt refund do return với refund do cancel order thông thường.
 
+**Transaction boundary khi gọi refund thật (bắt buộc, không phải tùy chọn)**: bước
+`ITEM_RECEIVED → REFUND_PENDING` chỉ là ghi DB thuần (an toàn nằm trong transaction chính), nhưng
+bước gọi `PaymentService.refund()` thật sự (network call tới VNPay Refund API) **phải** chạy ngoài
+transaction đang giữ lock của `return_requests`/`inventory` — đúng nguyên tắc "không giữ transaction
+khi gọi ngoài" đã áp dụng cho toàn bộ luồng VNPay hiện có (`REQUIRES_NEW` cho
+`PaymentResultApplier`/refund ledger, xem mục 0.6). Đây là loại lỗi **đã từng xảy ra thật** trong
+chính project này (đã sửa ở commit `daf5c49` — "payment tx-scoped HTTP call") — ghi chú tường minh ở
+đây để không tái phạm khi code module Return.
+
+**Prorate discount khi tính refund (bắt buộc để không vi phạm invariant refund cấp payment)**:
+`refund_amount_snapshot` **không** được lấy nguyên `unit_price_snapshot * quantity` nếu order có
+áp coupon (mục 6) — vì `payments.amount` là số tiền **sau** discount, còn `unit_price_snapshot` là
+giá **trước** discount. Nếu hoàn nguyên giá gốc cho từng item trả riêng lẻ, tổng `refunds.amount`
+của 1 payment hoàn toàn có thể vượt `payments.amount` — vi phạm thẳng rule đã chốt ở mục 0.6
+("Tổng refunds.amount... không được vượt quá payments.amount"). Công thức prorate:
+
+```
+discount_ratio = orders.total_amount / (orders.total_amount + orders.discount_amount)
+                  -- = 1 nếu order không dùng coupon (discount_amount = 0)
+refund_amount_snapshot = ROUND(unit_price_snapshot * quantity * discount_ratio, 2)
+```
+
+Tính 1 lần tại thời điểm tạo `return_requests` (đọc `orders.total_amount`/`discount_amount` hiện
+tại của order đó — 2 giá trị này không đổi sau khi order đã tạo, xem mục 6.3) và lưu cố định vào
+`refund_amount_snapshot`, không tính lại sau đó. `ReturnService.approve()`/luồng tạo refund vẫn nên
+validate phòng thủ thêm: tổng `refund_amount_snapshot` đã `REFUNDED`/`REFUND_PENDING` của cùng 1
+order không được vượt `payments.amount - đã refund trước đó do cancel` — chặn cứng ở tầng
+`PaymentService.refund()` (nơi đã sở hữu invariant này), không phải chỉ tin vào công thức prorate.
+
 ### 7.4 Module boundary & FK convention
 
 `return` là module giao dịch cốt lõi mới (biến động cao, tương tác Order/Payment/Inventory) — áp
@@ -804,7 +839,8 @@ return_requests
 - id (PK), order_id (reference, không FK), order_item_id (reference, không FK)
 - user_id (FK → users.id), seller_id (reference, không FK — snapshot từ order_item lúc tạo request)
 - reason (enum: DEFECTIVE, WRONG_ITEM, NOT_AS_DESCRIBED, CHANGED_MIND, OTHER), note (nullable)
-- refund_amount_snapshot (numeric — = order_item.unit_price_snapshot * quantity tại thời điểm tạo)
+- refund_amount_snapshot (numeric — unit_price_snapshot * quantity đã prorate theo discount_ratio
+  của order tại thời điểm tạo, xem công thức mục 7.3 — KHÔNG phải giá gốc chưa trừ discount)
 - status (enum: REQUESTED, APPROVED, REJECTED, CANCELLED, EXPIRED, ITEM_RECEIVED,
            REFUND_PENDING, REFUNDED, REFUND_FAILED)
 - approved_at, item_received_at, expires_at (nullable — set khi APPROVED, dùng cho auto-expire)
@@ -816,9 +852,11 @@ return_status_history
 - reason (nullable)
 - created_at
 
-UNIQUE (order_item_id) WHERE status IN ('REQUESTED', 'APPROVED')   -- chặn 2 request đang xử lý
-                                                                     -- song song cho cùng 1 item,
-                                                                     -- cùng kỹ thuật mục 6.4
+UNIQUE (order_item_id) WHERE status IN
+    ('REQUESTED', 'APPROVED', 'ITEM_RECEIVED', 'REFUND_PENDING', 'REFUND_FAILED')
+    -- mọi trạng thái CHƯA terminal (kể cả REFUND_FAILED — vẫn "đang xử lý", chờ admin retry, xem
+    -- mục 7.2) đều phải nằm trong danh sách chặn; chỉ REJECTED/CANCELLED/EXPIRED/REFUNDED (terminal
+    -- thật sự) mới cho phép tạo request mới cho cùng order_item — cùng kỹ thuật mục 6.4
 
 refunds (thêm cột, không tạo bảng mới)
 - return_request_id (nullable, reference, không FK — phân biệt refund do return vs do cancel order)
@@ -834,6 +872,10 @@ refunds (thêm cột, không tạo bảng mới)
 - Đã giả định **return window cố định 7 ngày, hardcode** (giống usage-limit 1 lần/user của Coupon)
   — nếu cần cấu hình theo category/seller, đây là mở rộng schema (thêm cột ở `products` hoặc
   `sellers`), không phải business logic riêng của module Return.
+- Đã giả định **prorate refund theo tỷ lệ discount toàn order** (mục 7.3) khi order có coupon — nếu
+  coupon chỉ nên áp cho 1 số sản phẩm cụ thể (không phải toàn order) thì công thức này sai; nhưng vì
+  Coupon v2 chỉ có điều kiện `min_order_amount` (không giới hạn theo sản phẩm/category — mục 6.1),
+  prorate đều theo tỷ lệ giá trị là cách hợp lý duy nhất tương thích với thiết kế coupon hiện tại.
 
 ## 8. v2 — Module Notification (Phase 10)
 
@@ -861,8 +903,10 @@ refunds (thêm cột, không tạo bảng mới)
 - Cùng 1 order đổi trạng thái 2 lần liên tiếp rất nhanh (VD do admin sửa tay rồi sửa lại) → mỗi
   transition tạo 1 dòng `notifications` riêng, **không** gộp/dedupe — chấp nhận khách nhận 2 email,
   đơn giản hơn cơ chế gộp thông minh mà lợi ích không tương xứng ở quy mô project.
-  cần retry đến khi đạt `MAX_ATTEMPTS` (mặc định 5) rồi dừng, đánh dấu `FAILED` vĩnh viễn — không
-  retry vô hạn (tránh lấp đầy queue bởi 1 địa chỉ email luôn bounce).
+- Gửi email thất bại (SMTP timeout, provider tạm thời từ chối...) → `NotificationDispatcher` tăng
+  `attempt_count`, tính lại `next_retry_at` (exponential backoff), cần retry đến khi đạt
+  `MAX_ATTEMPTS` (mặc định 5) rồi dừng, đánh dấu `FAILED` vĩnh viễn — không retry vô hạn (tránh lấp
+  đầy queue bởi 1 địa chỉ email luôn bounce).
 - Email gửi thành công nhưng job crash trước khi ghi lại `status = SENT` → worker chạy lại đọc thấy
   dòng vẫn `PENDING`, gửi lại → **duplicate email possible, chấp nhận đánh đổi** (tương tự nguyên
   tắc "at-least-once" IPN, khác ở chỗ hậu quả ở đây chỉ là khách nhận email trùng, không phải tiền —
@@ -988,19 +1032,37 @@ ledger entry đó, cộng tổng thành `seller_payouts.total_amount`. Payout t�
 admin xác nhận đã chuyển khoản thật → `PAID` (`paid_at = now()`) — thao tác thủ công, không có
 webhook nào cập nhật tự động vì không tích hợp cổng chuyển tiền thật (mục 9.1).
 
+**Giao tiếp module (chốt tường minh, không để ngỏ như bản nháp đầu)**: `PayoutService.recordEarning
+(orderId)` được `OrderService` gọi **trực tiếp qua service interface, trong cùng transaction** với
+transition `→ COMPLETED` — không dùng `ApplicationEventPublisher` kiểu Notification (mục 8.3). Lý do
+khác Notification: ghi nhận công nợ là dữ liệu tài chính cần đúng tuyệt đối (không được phép "thỉnh
+thoảng miss 1 event" như trường hợp email lỡ không gửi thì cùng lắm khách không nhận được thư), nên
+áp dụng đúng nguyên tắc đã chọn cho Coupon (mục 6.3: gọi trực tiếp, cùng transaction, vì đây thuần
+là ghi DB không có network call). `orders.status → COMPLETED` có **2 điểm vào** cần gọi
+`recordEarning()` — bắt buộc cả 2 nơi đều gọi, thiếu 1 trong 2 sẽ tạo lỗ hổng công nợ:
+1. Scheduled job tự động (`OrderMaintenanceProcessor`, `DELIVERED → COMPLETED` sau 3 ngày).
+2. Khách tự xác nhận nhận hàng sớm hơn (mục 0.6: "customer có thể tự xác nhận nhận hàng sớm hơn").
+
 ### 9.4 Tương tác với Return (mục 7) — điểm phức tạp nhất
 
-Khi 1 Return được `REFUNDED` cho `order_item` mà ledger entry chứa nó **đã** thuộc về 1 payout
-`PAID` rồi (seller đã được trả), hệ thống **không** đòi lại tiền tự động (không có cơ chế thu hồi
-tiền đã chuyển khoản thật ở v2) — thay vào đó:
+Khi 1 Return được `REFUNDED` cho `order_item` có ledger entry tương ứng, xử lý theo đúng 3 trường
+hợp của `payout_id` — **phải xét đủ cả 3, thiếu case giữa dễ làm sai lệch `total_amount` của 1
+payout đã generate nhưng chưa trả**:
 
-- Tạo 1 dòng `seller_ledger_entries` mới với `status = ADJUSTED`, `net_amount` âm (giá trị đúng bằng
-  phần bị hoàn trả tương ứng của seller đó), `payout_id = NULL` (chưa thuộc payout nào).
-- Dòng `ADJUSTED` âm này được gom vào batch payout **kế tiếp** của seller đó — trừ thẳng vào tổng
-  tiền lần trả tiếp theo (giống nguyên tắc "trừ lương kỳ sau" thay vì đòi hoàn ngay).
-- Nếu ledger entry gốc **chưa** thuộc payout nào (`payout_id IS NULL`, seller chưa được trả) →
-  chỉ cần đổi thẳng `status` của dòng gốc thành `VOIDED` (không tạo dòng điều chỉnh riêng) — đơn
-  giản hơn vì chưa có gì phải "trừ ngược".
+1. **`payout_id IS NULL`** (chưa gom vào payout nào) → chỉ cần đổi thẳng `status` của dòng gốc
+   thành `VOIDED` — đơn giản nhất vì chưa có tổng nào đã tính phải sửa lại.
+2. **`payout_id` trỏ tới 1 payout đang `PENDING`** (đã generate, admin chưa xác nhận trả) → **không**
+   sửa trực tiếp dòng gốc (payout đã "chốt sổ" tại thời điểm generate, sửa ngầm sẽ làm
+   `seller_payouts.total_amount` không còn khớp tổng các ledger entry thuộc nó — mất khả năng đối
+   soát). Thay vào đó: tạo dòng `ADJUSTED` âm mới (`payout_id = NULL`) như case 3, và **trừ trực
+   tiếp vào `seller_payouts.total_amount` của đúng payout `PENDING` đó** trong cùng transaction (đây
+   là payout chưa trả tiền thật nên còn sửa được, khác hẳn case `PAID`).
+3. **`payout_id` trỏ tới 1 payout đã `PAID`** (seller đã nhận tiền thật) → hệ thống **không** đòi lại
+   tiền tự động (không có cơ chế thu hồi tiền đã chuyển khoản thật ở v2). Tạo 1 dòng
+   `seller_ledger_entries` mới với `status = ADJUSTED`, `net_amount` âm (đúng bằng phần bị hoàn trả
+   tương ứng của seller đó), `payout_id = NULL` — dòng âm này được gom vào batch payout **kế tiếp**
+   của seller đó, trừ thẳng vào tổng tiền lần trả tiếp theo (giống nguyên tắc "trừ lương kỳ sau"
+   thay vì đòi hoàn ngay).
 
 Đây là lý do mục 7.2 ghi rõ "phải cài Return trước hoặc cùng lúc với Payout" — nếu cài Payout trước
 mà chưa có Return, sẽ không có chỗ neo cho luồng `ADJUSTED` này, dễ dẫn tới thiết kế lại giữa chừng.
