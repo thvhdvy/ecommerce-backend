@@ -1000,7 +1000,7 @@ Index gợi ý: `notifications(status, next_retry_at)` — phục vụ trực ti
 
 ## 9. v2 — Module Seller Payout (Phase 11)
 
-### 9.1 Phạm vi v2 (ghi nhận công nợ — không tích hợp chuyển tiền thật)
+### 9.1 Phạm vi v2 (số dư chạy — running balance, không tích hợp chuyển tiền thật)
 
 **Giới hạn quan trọng nhất phải chốt trước khi thiết kế**: đây là project cá nhân, **không** tích
 hợp cổng thanh toán ra (payout API thật của VNPay hay chuyển khoản ngân hàng) — phạm vi v2 dừng ở
@@ -1008,13 +1008,22 @@ hợp cổng thanh toán ra (payout API thật của VNPay hay chuyển khoản 
 động ngoài hệ thống (admin chuyển khoản thủ công rồi bấm xác nhận). Đây là quyết định thu hẹp scope
 tương tự Coupon/Return đã làm, tránh biến project thành tích hợp payment-gateway lần 2.
 
+**Quyết định đơn giản hoá (thay bản nháp đầu — bỏ mô hình "chốt sổ theo kỳ")**: bản nháp đầu dùng mô
+hình batch/period kiểu bảng lương (`period_start/period_end`, ledger entry gắn cứng vào 1 payout,
+kéo theo 3 nhánh xử lý khác nhau khi return xảy ra tuỳ payout đã tạo/`PENDING`/`PAID`). Đổi sang mô
+hình **số dư chạy (running balance)** đơn giản hơn nhiều, giống 1 tài khoản ngân hàng: mỗi seller có
+đúng 1 con số "đang nợ bao nhiêu", mọi sự kiện (bán được hàng, bị return) chỉ cộng/trừ thẳng vào con
+số đó, "trả tiền" là 1 hành động rút hết số dư hiện có — không có khái niệm "kỳ" hay "gắn ledger vào
+đúng 1 lần trả" nữa. Đánh đổi: mất khả năng nói chính xác "lần trả #123 gồm đúng những đơn nào" (đối
+soát kiểu bảng lương) — chấp nhận được vì lịch sử đầy đủ vẫn còn nguyên trong `seller_ledger_entries`
+(có timestamp, cộng dồn lại là ra đúng số dư tại bất kỳ thời điểm nào), chỉ là không tra theo "kỳ".
+
 - **Hoa hồng**: tỷ lệ % cố định toàn hệ thống (`PLATFORM_COMMISSION_RATE`, cấu hình qua
   `application.yml`, không phải theo từng seller/category ở v2 — per-seller rate là mở rộng v3).
 - **Thời điểm ghi nhận công nợ**: khi `orders.status` chuyển `COMPLETED` (đúng nguồn sự thật đã dùng
   cho Report ở mục 0.9: đọc `order_status_history` chứ không phải `orders.updated_at`).
-- **Chu kỳ payout**: theo lô (batch) do admin chủ động trigger cho 1 khoảng thời gian (VD "chốt sổ
-  tháng 1"), **không** tự động chạy theo lịch cố định ở v2 — admin cần soát trước khi chốt (đặc biệt
-  vì Return có thể phát sinh sau `COMPLETED`, xem 9.4).
+- **Trả tiền**: admin chủ động bấm "pay out" cho 1 seller bất kỳ lúc nào — hệ thống trả đúng số dư
+  hiện tại (có thể là 0 lần/tháng, 1 lần/tuần, tuỳ admin, **không** có lịch cố định ở v2).
 
 ### 9.2 User Flows & Edge Cases
 
@@ -1022,82 +1031,75 @@ tương tự Coupon/Return đã làm, tránh biến project thành tích hợp p
   gộp), tính trên tổng `unit_price_snapshot * quantity` của các `order_item` thuộc seller đó trong
   order — nhất quán với việc `order_items` đã có sẵn `seller_id` reference từ v1 (mục 0, extension
   point đã chừa sẵn).
-- Order `COMPLETED` rồi sau đó có Return được `REFUNDED` (mục 7) → ledger entry gốc của seller đó
-  phải bị điều chỉnh giảm tương ứng, xem chi tiết 9.4 — đây là lý do v2 payout **không** tự động trả
-  tiền ngay khi `COMPLETED`, phải chờ đủ return-window rồi mới generate batch (khuyến nghị admin đợi
-  qua `RETURN_WINDOW_DAYS` của mục 7 rồi mới chốt sổ tháng, dù hệ thống không cấm chốt sớm hơn).
-- Admin generate payout batch 2 lần cho cùng 1 khoảng thời gian → lần 2 chỉ gom các ledger entry
-  `EARNED` **chưa** thuộc payout nào (`seller_ledger_entries.payout_id IS NULL`) — không double-pay,
-  không cần validate thủ công khoảng ngày có bị trùng hay không.
-- Seller bị khóa (`sellers.status = LOCKED`) nhưng vẫn còn ledger entry `EARNED` chưa trả → vẫn cho
-  phép generate/trả payout bình thường (khóa tài khoản bán hàng không đồng nghĩa xóa nợ) — chỉ chặn
-  seller đăng sản phẩm mới/nhận order mới, không liên quan tới công nợ cũ.
+- Order `COMPLETED` rồi sau đó có Return được `REFUNDED` (mục 7) → trừ thẳng vào số dư hiện tại của
+  seller đó (mục 9.4) — **không** cần chờ return-window hết hạn mới cho phép trả tiền như bản nháp
+  đầu; admin có thể trả tiền bất cứ lúc nào, chấp nhận rủi ro nhỏ "return đến sau khi đã trả" vì case
+  đó vẫn xử lý được gọn (số dư âm, xem 9.4) chứ không gây sai lệch dữ liệu.
+- Seller bị khóa (`sellers.status = LOCKED`) nhưng vẫn còn số dư dương chưa trả → vẫn cho phép admin
+  pay out bình thường (khóa tài khoản bán hàng không đồng nghĩa xóa nợ) — chỉ chặn seller đăng sản
+  phẩm mới/nhận order mới, không liên quan tới công nợ cũ.
+- Admin pay out khi số dư đang **≤ 0** (seller đang nợ ngược platform, xem 9.4) → từ chối, không có
+  gì để trả.
 - Order bị hủy sau `COMPLETED` mà **không qua Return** (về lý thuyết không xảy ra theo state machine
   mục 0.6 — `SHIPPED`/`DELIVERED`/`COMPLETED` không cancel trực tiếp) → không cần xử lý, state
   machine đã chặn từ gốc.
 
 ### 9.3 Business Rules chốt
 
-**`seller_ledger_entries`**: 1 dòng / (`order_id`, `seller_id`) — unique constraint chặn tạo trùng
-nếu event `COMPLETED` vô tình publish 2 lần (idempotency, cùng tinh thần `payment_webhook_events`).
-Mỗi dòng chốt cứng `gross_amount`, `commission_amount` (= `gross_amount * PLATFORM_COMMISSION_RATE`
-tại thời điểm tạo — đổi rate sau này không ảnh hưởng ledger đã chốt), `net_amount = gross - commission`.
+**`seller_ledger_entries`**: bảng lịch sử **append-only**, 1 dòng cho mỗi sự kiện làm đổi số dư —
+`EARNED` (dương, khi order `COMPLETED`) hoặc `ADJUSTED` (âm, khi return `REFUNDED`). Mỗi dòng
+`EARNED` chốt cứng `gross_amount`, `commission_amount` (= `gross_amount * PLATFORM_COMMISSION_RATE`
+tại thời điểm tạo — đổi rate sau này không ảnh hưởng ledger đã chốt), `net_amount = gross -
+commission`. Unique `(order_id, seller_id) WHERE type = 'EARNED'` chặn ghi trùng nếu event
+`COMPLETED` vô tình gọi 2 lần (idempotency, cùng tinh thần `payment_webhook_events`).
 
-**`seller_payouts`**: 1 lần generate = 1 dòng, gom toàn bộ `seller_ledger_entries` đang
-`status = EARNED AND payout_id IS NULL` **của 1 seller** trong khoảng `period_start..period_end`
-(theo `order_status_history.created_at` của lần `COMPLETED`) vào 1 payout, set `payout_id` cho các
-ledger entry đó, cộng tổng thành `seller_payouts.total_amount`. Payout tạo ra ở `status = PENDING`,
-admin xác nhận đã chuyển khoản thật → `PAID` (`paid_at = now()`) — thao tác thủ công, không có
-webhook nào cập nhật tự động vì không tích hợp cổng chuyển tiền thật (mục 9.1).
+**`seller_balances`**: 1 dòng/seller, giữ đúng 1 cột `balance` = tổng cộng dồn tất cả
+`seller_ledger_entries.net_amount` của seller đó **chưa được trả**. Cập nhật bằng conditional
+UPDATE (`balance = balance + :amount`), **không** đọc-rồi-ghi — cùng kỹ thuật đã dùng cho
+`inventory.quantity_available`/`coupons.usage_reserved` (design doc mục 0.9/6.4), tránh race khi 2
+sự kiện (VD 2 order cùng `COMPLETED` gần như đồng thời) cùng cập nhật 1 dòng balance. Dòng
+`seller_balances` được tạo lazy (insert nếu chưa có) ngay lần `EARNED` đầu tiên của seller đó.
 
-**Giao tiếp module (chốt tường minh, không để ngỏ như bản nháp đầu)**: `PayoutService.recordEarning
-(orderId)` được `OrderService` gọi **trực tiếp qua service interface, trong cùng transaction** với
-transition `→ COMPLETED` — không dùng `ApplicationEventPublisher` kiểu Notification (mục 8.3). Lý do
-khác Notification: ghi nhận công nợ là dữ liệu tài chính cần đúng tuyệt đối (không được phép "thỉnh
-thoảng miss 1 event" như trường hợp email lỡ không gửi thì cùng lắm khách không nhận được thư), nên
-áp dụng đúng nguyên tắc đã chọn cho Coupon (mục 6.3: gọi trực tiếp, cùng transaction, vì đây thuần
-là ghi DB không có network call). `orders.status → COMPLETED` có **2 điểm vào** cần gọi
-`recordEarning()` — bắt buộc cả 2 nơi đều gọi, thiếu 1 trong 2 sẽ tạo lỗ hổng công nợ:
+**Giao tiếp module**: `PayoutService.recordEarning(orderId)` được `OrderService` gọi **trực tiếp qua
+service interface, trong cùng transaction** với transition `→ COMPLETED` — không dùng
+`ApplicationEventPublisher` kiểu Notification (mục 8.3), vì ghi nhận công nợ là dữ liệu tài chính
+cần đúng tuyệt đối, không được phép "thỉnh thoảng miss 1 event". Đúng nguyên tắc đã chọn cho Coupon
+(mục 6.3: gọi trực tiếp, cùng transaction, vì đây thuần là ghi DB không có network call).
+`orders.status → COMPLETED` có **2 điểm vào** cần gọi `recordEarning()` — bắt buộc cả 2 nơi đều gọi,
+thiếu 1 trong 2 sẽ tạo lỗ hổng công nợ:
 1. Scheduled job tự động (`OrderMaintenanceProcessor`, `DELIVERED → COMPLETED` sau 3 ngày).
 2. Khách tự xác nhận nhận hàng sớm hơn (mục 0.6: "customer có thể tự xác nhận nhận hàng sớm hơn").
 
-### 9.4 Tương tác với Return (mục 7) — điểm phức tạp nhất
+### 9.4 Tương tác với Return (mục 7) — giờ chỉ còn 1 nhánh xử lý
 
-Khi 1 Return được `REFUNDED` cho `order_item` có ledger entry tương ứng, xử lý theo đúng 3 trường
-hợp của `payout_id` — **phải xét đủ cả 3, thiếu case giữa dễ làm sai lệch `total_amount` của 1
-payout đã generate nhưng chưa trả**:
+Khi 1 Return được `REFUNDED`, `ReturnService`/hook tương ứng gọi `PayoutService.recordAdjustment
+(returnRequestId, sellerId, amount)` — **luôn đúng 1 hành động duy nhất**, không cần phân biệt seller
+đã được trả hay chưa (khác hẳn 3 nhánh của mô hình batch cũ):
 
-1. **`payout_id IS NULL`** (chưa gom vào payout nào) → chỉ cần đổi thẳng `status` của dòng gốc
-   thành `VOIDED` — đơn giản nhất vì chưa có tổng nào đã tính phải sửa lại.
-2. **`payout_id` trỏ tới 1 payout đang `PENDING`** (đã generate, admin chưa xác nhận trả) → **không**
-   sửa trực tiếp dòng gốc (payout đã "chốt sổ" tại thời điểm generate, sửa ngầm sẽ làm
-   `seller_payouts.total_amount` không còn khớp tổng các ledger entry thuộc nó — mất khả năng đối
-   soát). Thay vào đó: tạo dòng `ADJUSTED` âm mới (`payout_id = NULL`) như case 3, và **trừ trực
-   tiếp vào `seller_payouts.total_amount` của đúng payout `PENDING` đó** trong cùng transaction (đây
-   là payout chưa trả tiền thật nên còn sửa được, khác hẳn case `PAID`).
-3. **`payout_id` trỏ tới 1 payout đã `PAID`** (seller đã nhận tiền thật) → hệ thống **không** đòi lại
-   tiền tự động (không có cơ chế thu hồi tiền đã chuyển khoản thật ở v2). Tạo 1 dòng
-   `seller_ledger_entries` mới với `status = ADJUSTED`, `net_amount` âm (đúng bằng phần bị hoàn trả
-   tương ứng của seller đó), `payout_id = NULL` — dòng âm này được gom vào batch payout **kế tiếp**
-   của seller đó, trừ thẳng vào tổng tiền lần trả tiếp theo (giống nguyên tắc "trừ lương kỳ sau"
-   thay vì đòi hoàn ngay).
-
-Đây là lý do mục 7.2 ghi rõ "phải cài Return trước hoặc cùng lúc với Payout" — nếu cài Payout trước
-mà chưa có Return, sẽ không có chỗ neo cho luồng `ADJUSTED` này, dễ dẫn tới thiết kế lại giữa chừng.
+1. Ghi 1 dòng `seller_ledger_entries` mới, `type = ADJUSTED`, `net_amount` âm, `return_request_id`
+   trỏ về return gây ra điều chỉnh (trace/audit).
+2. Trừ thẳng vào `seller_balances.balance` bằng đúng conditional UPDATE ở mục 9.3 (`balance =
+   balance - :amount`) — **không có sàn chặn ở 0**, số dư **được phép âm**. Số âm này tự nhiên nghĩa
+   là "seller đang nợ ngược platform" (đã lỡ được trả tiền cho đơn hàng mà khách sau đó trả lại) —
+   không có cơ chế đòi tiền chủ động, khoản nợ này tự động bù trừ vào lần `EARNED` kế tiếp của chính
+   seller đó khi cộng dồn vào balance. Đây là lý do mô hình running-balance đơn giản hơn hẳn: "trừ
+   lương kỳ sau" (ý tưởng của bản nháp cũ) tự động xảy ra nhờ phép cộng dồn, không cần code riêng.
+3. Admin `payOut()` chỉ được phép khi `balance > 0` (mục 9.2) — số dư âm tự nhiên chặn payout mới cho
+   tới khi seller "trả nợ" xong qua các đơn hàng tiếp theo.
 
 ### 9.5 API Endpoints (đề xuất)
 
 ```
 SELLER
-GET    /api/seller/ledger                      (lịch sử ghi nhận công nợ của chính mình, pagination)
-GET    /api/seller/payouts                     (lịch sử các lần đã/sẽ được trả, pagination)
+GET    /api/seller/ledger                      (lịch sử EARNED/ADJUSTED của chính mình, pagination)
+GET    /api/seller/balance                     (số dư hiện tại)
+GET    /api/seller/payouts                     (lịch sử các lần đã được trả, pagination)
 
 ADMIN
-POST   /api/admin/payouts/generate             (body: periodStart, periodEnd — tạo payout cho TẤT
-                                                 CẢ seller có ledger entry EARNED trong kỳ, mỗi
-                                                 seller 1 payout riêng)
-GET    /api/admin/payouts                      (pagination, filter theo status/seller)
-PATCH  /api/admin/payouts/{id}/mark-paid
+GET    /api/admin/sellers/{id}/balance         (xem số dư 1 seller bất kỳ)
+POST   /api/admin/sellers/{id}/payouts         (trả toàn bộ số dư hiện tại — tạo 1 seller_payouts,
+                                                 balance sau do tru dung so tien vua tra)
+GET    /api/admin/payouts                      (pagination, filter theo seller)
 ```
 
 ### 9.6 Schema
@@ -1105,27 +1107,34 @@ PATCH  /api/admin/payouts/{id}/mark-paid
 ```
 seller_ledger_entries
 - id (PK), seller_id (reference, không FK — cùng nhóm module giao dịch cốt lõi như order_items)
-- order_id (reference, không FK), payout_id (nullable reference tới seller_payouts.id, không FK)
-- gross_amount (numeric), commission_amount (numeric), net_amount (numeric)
-- status (enum: EARNED, ADJUSTED, VOIDED)
-- return_request_id (nullable, reference, không FK — chỉ có giá trị khi status = ADJUSTED, trace về
-  return nào gây ra điều chỉnh)
+- order_id (reference, không FK, nullable — null khi type=ADJUSTED do return, có giá trị khi EARNED)
+- return_request_id (reference, không FK, nullable — chỉ có giá trị khi type=ADJUSTED)
+- type (enum: EARNED, ADJUSTED)
+- gross_amount (numeric, nullable — chỉ EARNED), commission_amount (numeric, nullable — chỉ EARNED)
+- net_amount (numeric — dương nếu EARNED, âm nếu ADJUSTED; đây là số thực sự cộng/trừ vào balance)
 - created_at
 
-UNIQUE (order_id, seller_id) WHERE status = 'EARNED'   -- chặn double-ghi-nhận cho cùng 1 order/seller
+UNIQUE (order_id, seller_id) WHERE type = 'EARNED'   -- chặn ghi trùng cho cùng 1 order/seller
+
+seller_balances
+- seller_id (PK, reference, không FK)
+- balance (numeric, default 0 — được phép âm, xem mục 9.4)
+- version (optimistic lock, bảo vệ đường đọc-sửa thủ công của admin nếu có, không bảo vệ hot path
+  conditional UPDATE — cùng nguyên tắc 2-cơ-chế-song-song đã áp dụng cho Inventory/Coupon)
+- updated_at
 
 seller_payouts
 - id (PK), seller_id (reference, không FK)
-- period_start, period_end, total_amount (numeric)
-- status (enum: PENDING, PAID)
-- paid_at (nullable), created_at
+- amount (numeric — đúng bằng balance tại thời điểm trả)
+- created_at (CHÍNH LÀ thời điểm trả — không có status PENDING/PAID nữa vì hành động pay out là 1
+  bước duy nhất, không có "tạo trước, xác nhận sau" như mô hình batch cũ)
 ```
 
 Ghi chú FK: `seller_id` ở đây **không** dùng FK dù `sellers` là module nền (khác với `products.seller_id`
-vốn có FK thật) — vì `seller_ledger_entries`/`seller_payouts` bản thân là dữ liệu giao dịch/tài
-chính biến động cao (cùng nhóm với Order/Payment), áp dụng quy tắc theo bản chất bảng đang xét chứ
-không phải theo module đích tham chiếu tới. Cần bạn xác nhận lại cách hiểu này ở mục 9.7 nếu muốn
-diễn giải khác.
+vốn có FK thật) — vì `seller_ledger_entries`/`seller_balances`/`seller_payouts` bản thân là dữ liệu
+giao dịch/tài chính biến động cao (cùng nhóm với Order/Payment), áp dụng quy tắc theo bản chất bảng
+đang xét chứ không phải theo module đích tham chiếu tới. Cần bạn xác nhận lại cách hiểu này ở mục 9.7
+nếu muốn diễn giải khác.
 
 ### 9.7 Điểm cần bạn quyết định lại nếu không đồng ý
 
@@ -1134,10 +1143,13 @@ diễn giải khác.
 - Đã giả định **không tích hợp chuyển tiền thật** (chỉ ghi nhận + đánh dấu thủ công) — nếu muốn tích
   hợp thật (VD VNPay có API chuyển tiền cho merchant), đây là tích hợp mới hoàn toàn, độ phức tạp
   tương đương module Payment ban đầu.
-- Đã giả định **`seller_id` trong ledger/payout không FK** (xem 9.6) — nếu bạn cho rằng bảng tài
-  chính vẫn nên FK cứng tới `sellers` vì đây không phải bảng "core transactional biến động" theo
+- Đã giả định **`seller_id` trong ledger/balance/payout không FK** (xem 9.6) — nếu bạn cho rằng bảng
+  tài chính vẫn nên FK cứng tới `sellers` vì đây không phải bảng "core transactional biến động" theo
   đúng tinh thần mục 0.8 (nó không có khả năng tách microservice độc lập như Order/Payment), có thể
   đổi lại — đây là điểm diễn giải quy tắc FK chưa từng gặp trước đó, cần chốt tường minh.
+- Đã giả định **balance được phép âm vô thời hạn, không có cảnh báo/hành động gì thêm** khi seller nợ
+  ngược platform — nếu cần chặn seller đăng sản phẩm mới hoặc cảnh báo admin khi balance âm quá lâu,
+  đây là business rule bổ sung chưa có trong v2 (liên quan `sellers.status`, ngoài phạm vi module này).
 
 ## 10. v2 — Shipment theo từng Seller (Phase 12, phác thảo sơ bộ)
 
