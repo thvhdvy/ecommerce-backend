@@ -980,6 +980,24 @@ Index gợi ý: `notifications(status, next_retry_at)` — phục vụ trực ti
 - Đã giả định **không có in-app notification list** — nếu muốn có, cần thêm field `read_at` và API
   `GET /api/notifications/me`, việc mở rộng không lớn nhưng là quyết định phạm vi cần xác nhận.
 
+### 8.7 Ghi chú triển khai thực tế (khác nhỏ so với bản thiết kế ban đầu)
+
+- **Package tên `notification`** giữ nguyên như thiết kế (không như module Return phải đổi tên do
+  `return` là từ khóa Java).
+- **`NotificationType` đặt ở package `notification.event`, không phải `notification.entity`** —
+  vì Order/Payment module cần import enum này để publish event, và nguyên tắc "không import thẳng
+  entity module khác" (mục 0.8) áp dụng chặt hơn cho package `entity`. Enum vẫn được tái dùng làm
+  cột `notifications.type`, chỉ khác vị trí file.
+- **`management.health.mail.enabled=false`** bắt buộc phải thêm — mặc định Spring Boot tự động gắn
+  `MailHealthIndicator` vào `/actuator/health` khi có `spring-boot-starter-mail`, khiến health check
+  toàn app trả `DOWN` (503) nếu Mailhog tạm thời không reachable. Đúng tinh thần mục 8.3 ("lỗi gửi
+  email không được phép làm rollback nghiệp vụ chính") mở rộng sang cả health probe — mail là
+  side-channel, không nên gate liveness/readiness của cả hệ thống.
+- **`Notification.save()` không cần bean/`REQUIRES_NEW` riêng như `RefundLedger`/
+  `ReturnRefundResultApplier`** — cập nhật trạng thái 1 dòng `notifications` là thao tác đơn-entity,
+  `JpaRepository.save()` tự có transaction riêng cho chính nó; khác Return/Payout vì ở đó cần nhiều
+  bước ghi atomic cùng lúc (restock + status + history).
+
 ## 9. v2 — Module Seller Payout (Phase 11)
 
 ### 9.1 Phạm vi v2 (ghi nhận công nợ — không tích hợp chuyển tiền thật)

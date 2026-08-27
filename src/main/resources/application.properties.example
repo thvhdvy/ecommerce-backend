@@ -17,6 +17,15 @@ vnpay.pay-url=https://sandbox.vnpayment.vn/paymentv2/vpcpay.html
 vnpay.refund-api-url=https://sandbox.vnpayment.vn/merchant_webapi/api/transaction
 vnpay.return-url=http://localhost:8080/api/payments/vnpay-return
 
+# Notification module — SMTP tro toi Mailhog cho dev (xem docker-compose.yml), doi qua provider that
+# o production bang env var MAIL_HOST/MAIL_PORT.
+spring.mail.host=${MAIL_HOST:localhost}
+spring.mail.port=${MAIL_PORT:1025}
+spring.mail.properties.mail.smtp.auth=false
+spring.mail.properties.mail.smtp.starttls.enable=false
+notification.mail.from=no-reply@ecommerce.example
+management.health.mail.enabled=false
+
 # Actuator - /health public (health check cho LB/k8s probe), cac endpoint con lai (metrics, prometheus, info)
 # yeu cau ROLE_ADMIN, xem SecurityConfig.
 management.endpoints.web.exposure.include=health,info,metrics,prometheus

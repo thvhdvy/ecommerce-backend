@@ -6,6 +6,8 @@ import com.thanhnguyen.ecommercebackend.cart.service.CartService;
 import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.coupon.service.CouponService;
 import com.thanhnguyen.ecommercebackend.inventory.service.InventoryService;
+import com.thanhnguyen.ecommercebackend.notification.event.NotificationType;
+import com.thanhnguyen.ecommercebackend.notification.event.OrderNotificationEvent;
 import com.thanhnguyen.ecommercebackend.order.dto.CheckoutRequest;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemResponse;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemReturnInfo;
@@ -29,6 +31,7 @@ import com.thanhnguyen.ecommercebackend.user.entity.Seller;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.service.SellerService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -68,6 +71,7 @@ public class OrderServiceImpl implements OrderService {
     private final SellerService sellerService;
     private final OrderMaintenanceProcessor maintenanceProcessor;
     private final CouponService couponService;
+    private final ApplicationEventPublisher eventPublisher;
 
     // PaymentServiceImpl phụ thuộc ngược lại OrderService (confirmPayment/markPaymentFailed) —
     // @Lazy ở chiều Order->Payment (chỉ dùng khi cancel order đã CONFIRMED) để phá vòng lặp khởi tạo bean.
@@ -80,7 +84,8 @@ public class OrderServiceImpl implements OrderService {
             @Lazy PaymentService paymentService,
             SellerService sellerService,
             OrderMaintenanceProcessor maintenanceProcessor,
-            CouponService couponService) {
+            CouponService couponService,
+            ApplicationEventPublisher eventPublisher) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
@@ -90,6 +95,7 @@ public class OrderServiceImpl implements OrderService {
         this.sellerService = sellerService;
         this.maintenanceProcessor = maintenanceProcessor;
         this.couponService = couponService;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -199,6 +205,7 @@ public class OrderServiceImpl implements OrderService {
         Order saved = saveWithOptimisticLock(order);
         orderStatusHistoryRepository.save(
                 new OrderStatusHistory(saved, previousStatus, OrderStatus.CANCELLED, actor, historyReason));
+        eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_CANCELLED, saved.getId()));
 
         if (paidStatuses.contains(previousStatus)) {
             refundAfterCommit(order.getId(), refundReason);
@@ -285,6 +292,7 @@ public class OrderServiceImpl implements OrderService {
         orderRepository.save(order);
         orderStatusHistoryRepository.save(new OrderStatusHistory(
                 order, previousStatus, OrderStatus.CONFIRMED, null, "VNPay payment succeeded"));
+        eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_CONFIRMED, order.getId()));
     }
 
     @Override
@@ -369,6 +377,7 @@ public class OrderServiceImpl implements OrderService {
         orderRepository.save(order);
         orderStatusHistoryRepository.save(new OrderStatusHistory(
                 order, OrderStatus.PACKED, OrderStatus.SHIPPED, actor, "Shipper assigned"));
+        eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_SHIPPED, order.getId()));
     }
 
     @Override
@@ -385,6 +394,7 @@ public class OrderServiceImpl implements OrderService {
         orderRepository.save(order);
         orderStatusHistoryRepository.save(new OrderStatusHistory(
                 order, OrderStatus.SHIPPED, OrderStatus.DELIVERED, actor, "Delivery succeeded"));
+        eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_DELIVERED, order.getId()));
     }
 
     @Override
@@ -424,6 +434,7 @@ public class OrderServiceImpl implements OrderService {
         // Auto-cancel la he qua tu dong cua business rule (het quyen retry), khong phai hanh dong truc tiep cua actor -> changed_by = null.
         orderStatusHistoryRepository.save(new OrderStatusHistory(
                 order, OrderStatus.FAILED_DELIVERY, OrderStatus.CANCELLED, null, "Auto-cancel after retry exhausted"));
+        eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_CANCELLED, order.getId()));
 
         refundAfterCommit(orderId, "Auto-cancel after 2nd failed delivery attempt");
     }
@@ -486,6 +497,12 @@ public class OrderServiceImpl implements OrderService {
                 item.getProductId(), item.getProductNameSnapshot(), item.getUnitPriceSnapshot(),
                 item.getQuantity(), order.getStatus(), order.getTotalAmount(), order.getDiscountAmount(),
                 deliveredAt);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Long getCustomerIdByOrderId(Long orderId) {
+        return orderRepository.findById(orderId).map(order -> order.getCustomer().getId()).orElse(null);
     }
 
     /**

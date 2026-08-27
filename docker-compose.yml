@@ -15,11 +15,21 @@ services:
       timeout: 5s
       retries: 10
 
+  # SMTP gia lap cho Notification module (design doc v2 muc 8.1) — khong can domain/tai khoan email
+  # that de demo day du luong gui/retry. Web UI xem email da "gui" tai http://localhost:8025.
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   app:
     build: .
     depends_on:
       postgres:
         condition: service_healthy
+      mailhog:
+        condition: service_started
     ports:
       - "8080:8080"
     environment:
@@ -30,6 +40,8 @@ services:
       VNPAY_TMN_CODE: ${VNPAY_TMN_CODE}
       VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET}
       VNPAY_RETURN_URL: ${VNPAY_RETURN_URL:-http://localhost:8080/api/payments/vnpay-return}
+      MAIL_HOST: mailhog
+      MAIL_PORT: 1025
 
 volumes:
   postgres_data:

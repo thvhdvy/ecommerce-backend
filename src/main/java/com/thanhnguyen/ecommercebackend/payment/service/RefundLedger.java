@@ -2,6 +2,8 @@ package com.thanhnguyen.ecommercebackend.payment.service;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Page;
+import com.thanhnguyen.ecommercebackend.notification.event.NotificationType;
+import com.thanhnguyen.ecommercebackend.notification.event.OrderNotificationEvent;
 import com.thanhnguyen.ecommercebackend.payment.entity.Payment;
 import com.thanhnguyen.ecommercebackend.payment.entity.PaymentStatus;
 import com.thanhnguyen.ecommercebackend.payment.entity.Refund;
@@ -14,6 +16,7 @@ import com.thanhnguyen.ecommercebackend.payment.repository.RefundRepository;
 import com.thanhnguyen.ecommercebackend.payment.util.VnpayRefundResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +37,7 @@ class RefundLedger {
 
     private final PaymentRepository paymentRepository;
     private final RefundRepository refundRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     // REQUIRES_NEW: refund() co the duoc goi tu TransactionSynchronization.afterCommit() (xem
     // OrderServiceImpl.refundAfterCommit) — tai thoi diem do transaction goc vua commit xong,
@@ -95,6 +99,7 @@ class RefundLedger {
         if (result.success()) {
             refund.setStatus(RefundStatus.REFUNDED);
             refund.setVnpRefundTransactionNo(result.vnpTransactionNo());
+            eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_REFUNDED, orderId));
         } else {
             refund.setStatus(RefundStatus.REFUND_FAILED);
             log.error("VNPay refund failed for order {}: responseCode={}", orderId, result.responseCode());

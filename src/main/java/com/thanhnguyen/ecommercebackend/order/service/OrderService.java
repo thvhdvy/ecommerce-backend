@@ -86,4 +86,11 @@ public interface OrderService {
      * mục 7.3/7.4). Trả về null nếu order_item không tồn tại.
      */
     OrderItemReturnInfo getOrderItemForReturn(Long orderItemId);
+
+    /**
+     * Dùng bởi Notification module: resolve customerId từ orderId khi xử lý domain event (order
+     * confirmed/shipped/delivered/cancelled/refunded) — design doc v2 mục 8.3. Trả về null nếu
+     * order không tồn tại (phòng thủ — không nên xảy ra vì event chỉ publish sau khi order đã lưu).
+     */
+    Long getCustomerIdByOrderId(Long orderId);
 }

@@ -26,6 +26,7 @@ import com.thanhnguyen.ecommercebackend.product.exception.MultiplePrimaryImagesE
 import com.thanhnguyen.ecommercebackend.user.exception.NotASellerException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductOwnershipException;
+import com.thanhnguyen.ecommercebackend.notification.exception.NotificationNotFoundException;
 import com.thanhnguyen.ecommercebackend.returns.exception.ReturnAlreadyActiveException;
 import com.thanhnguyen.ecommercebackend.returns.exception.ReturnNotEligibleException;
 import com.thanhnguyen.ecommercebackend.returns.exception.ReturnNotFoundException;
@@ -350,6 +351,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleCouponAlreadyUsed(CouponAlreadyUsedException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("COUPON_ALREADY_USED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(NotificationNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNotificationNotFound(NotificationNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("NOTIFICATION_NOT_FOUND", ex.getMessage()));
     }
 
     @ExceptionHandler(ReturnNotFoundException.class)
