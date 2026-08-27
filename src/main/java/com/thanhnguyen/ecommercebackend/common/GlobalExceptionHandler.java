@@ -2,6 +2,11 @@ package com.thanhnguyen.ecommercebackend.common;
 
 import com.thanhnguyen.ecommercebackend.cart.exception.CartItemNotFoundException;
 import com.thanhnguyen.ecommercebackend.cart.exception.CartOwnershipException;
+import com.thanhnguyen.ecommercebackend.coupon.exception.CouponAlreadyUsedException;
+import com.thanhnguyen.ecommercebackend.coupon.exception.CouponInvalidException;
+import com.thanhnguyen.ecommercebackend.coupon.exception.CouponMinOrderNotMetException;
+import com.thanhnguyen.ecommercebackend.coupon.exception.CouponNotFoundException;
+import com.thanhnguyen.ecommercebackend.coupon.exception.CouponUsageLimitExceededException;
 import com.thanhnguyen.ecommercebackend.inventory.exception.InsufficientStockException;
 import com.thanhnguyen.ecommercebackend.inventory.exception.InventoryNotFoundException;
 import com.thanhnguyen.ecommercebackend.order.exception.EmptyCartException;
@@ -310,6 +315,36 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleReviewNotEligible(ReviewNotEligibleException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error("REVIEW_NOT_ELIGIBLE", ex.getMessage()));
+    }
+
+    @ExceptionHandler(CouponNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleCouponNotFound(CouponNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("COUPON_NOT_FOUND", ex.getMessage()));
+    }
+
+    @ExceptionHandler(CouponInvalidException.class)
+    public ResponseEntity<ApiResponse<Void>> handleCouponInvalid(CouponInvalidException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("COUPON_INVALID", ex.getMessage()));
+    }
+
+    @ExceptionHandler(CouponMinOrderNotMetException.class)
+    public ResponseEntity<ApiResponse<Void>> handleCouponMinOrderNotMet(CouponMinOrderNotMetException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("COUPON_MIN_ORDER_NOT_MET", ex.getMessage()));
+    }
+
+    @ExceptionHandler(CouponUsageLimitExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleCouponUsageLimitExceeded(CouponUsageLimitExceededException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("COUPON_USAGE_LIMIT_EXCEEDED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(CouponAlreadyUsedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleCouponAlreadyUsed(CouponAlreadyUsedException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("COUPON_ALREADY_USED", ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

@@ -113,7 +113,7 @@ class OrderControllerIntegrationTest {
     }
 
     private CheckoutRequest defaultCheckoutRequest() {
-        return new CheckoutRequest("Nguyen Van A", "0900000000", "123 Test Street", null);
+        return new CheckoutRequest("Nguyen Van A", "0900000000", "123 Test Street", null, null);
     }
 
     @Test

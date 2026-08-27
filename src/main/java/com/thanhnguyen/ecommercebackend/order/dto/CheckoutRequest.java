@@ -19,4 +19,8 @@ public class CheckoutRequest {
     private String shippingAddress;
 
     private String shippingNote;
+
+    // Tuy chon — validate + giu cho luot dung nam trong checkout, khong phai endpoint rieng
+    // (design doc v2 muc 6.3: giu cho coupon dong thoi voi tao order, cung 1 transaction).
+    private String couponCode;
 }

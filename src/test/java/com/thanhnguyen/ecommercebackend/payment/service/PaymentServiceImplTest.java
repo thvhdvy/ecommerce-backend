@@ -82,7 +82,9 @@ class PaymentServiceImplTest {
     }
 
     private OrderResponse orderResponse(OrderStatus status) {
-        return new OrderResponse(10L, status, new BigDecimal("45.00"), "A", "0900000000", "addr", null, List.of(), null, null);
+        return new OrderResponse(
+                10L, status, new BigDecimal("45.00"), "A", "0900000000", "addr", null, List.of(), null, null,
+                null, BigDecimal.ZERO);
     }
 
     @Test

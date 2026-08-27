@@ -522,7 +522,154 @@ Phase 7 quan trọng không kém các phase trước — đây là phần giúp 
 
 - Tách shipment theo từng seller trong 1 order (thay vì 1 shipment/order).
 - Seller payout / tính hoa hồng.
-- Coupon / Promotion engine (giảm giá, điều kiện áp dụng, giới hạn lượt dùng có concurrency).
+- Coupon / Promotion engine (giảm giá, điều kiện áp dụng, giới hạn lượt dùng có concurrency) — **đã thiết kế chi tiết ở mục 6**.
 - Return / Exchange flow (state machine riêng, tương tác lại với refund).
 - Notification service (email/push khi order đổi trạng thái).
 - Multi-currency.
+
+## 6. v2 — Module Coupon/Promotion (Phase 8)
+
+Bản nháp thiết kế đầu tiên của v2, chọn làm trước vì độc lập với các module khác và bài toán
+concurrency cốt lõi (giới hạn lượt dùng) tái dùng gần như nguyên xi pattern `available/reserved`
+đã kiểm chứng ở module Inventory (mục 0.9) — củng cố kỹ năng đã có thay vì mở bài toán mới.
+
+### 6.1 Phạm vi v2 (MVP cho coupon — chừa lại việc mở rộng cho v3)
+
+- **Loại discount**: `PERCENTAGE` (có `max_discount_amount` tùy chọn để chặn trần) hoặc `FIXED_AMOUNT`.
+- **Điều kiện áp dụng**: chỉ `min_order_amount` (đơn tối thiểu). **Không** áp dụng theo category/seller/product cụ thể ở v2 — lý do: nếu giới hạn theo category, discount phải prorate qua từng `order_item`, gặp lại đúng vấn đề "refund không breakdown được theo item" đã ghi nhận là giới hạn của Report module (mục 0.9) — tránh nhân đôi vấn đề cũ trong tính năng mới.
+- **1 order = tối đa 1 coupon** — không stacking. Stacking (nhiều coupon cộng dồn, thứ tự áp dụng, ưu tiên) là bài toán độc lập, để v3 nếu cần.
+- **Giới hạn lượt dùng**: `usage_limit` toàn hệ thống (nullable = không giới hạn) + **mỗi user tối đa 1 lần/coupon** (hardcode, không cấu hình N lần/user ở v2 — xem lý do concurrency ở mục 6.4).
+- **Vòng đời coupon**: admin tạo/sửa, `status` (`ACTIVE`/`INACTIVE`, giống Product — soft toggle, không xóa cứng) + cửa sổ thời gian `starts_at`/`ends_at` (nullable = không giới hạn).
+
+### 6.2 User Flows & Edge Cases
+
+- Coupon hết hạn/`INACTIVE`/chưa tới `starts_at`/đã quá `ends_at` lúc checkout → từ chối, **không tạo order** (giữ nguyên nguyên tắc "checkout thất bại giữa chừng → rollback toàn bộ", không âm thầm bỏ qua coupon rồi tạo order full giá).
+- Đơn không đạt `min_order_amount` → từ chối tương tự, không tự động điều chỉnh.
+- 2 request checkout cùng lúc dùng nốt lượt cuối của 1 coupon giới hạn → conditional UPDATE (mục 6.4) đảm bảo chỉ 1 request thành công, request thua nhận lỗi rõ ràng để thử lại (không dùng coupon hoặc coupon khác) — đúng pattern race-condition đã xử lý cho tồn kho.
+- User double-submit cùng 1 coupon (2 tab/device) → chặn bằng unique constraint DB (mục 6.4), không chặn bằng kiểm tra đọc-trước-ghi (dễ race).
+- Discount tính ra lớn hơn tổng đơn (VD `FIXED_AMOUNT` 100k cho đơn 80k) → discount bị clamp về đúng bằng tổng đơn, `total_amount` sau discount tối thiểu là 0, không âm.
+- Preview discount trước khi bấm đặt hàng (FE muốn hiển thị "tiết kiệm được X") → endpoint riêng **không** giữ chỗ lượt dùng (xem mục 6.5) — nếu dùng chung cơ chế reserve của checkout, mỗi lần user gõ thử mã sẽ ngốn 1 lượt dùng thật dù chưa đặt hàng.
+- Order dùng coupon bị hủy **trước khi thanh toán** (`PENDING_PAYMENT → CANCELLED`, hoặc `PAYMENT_EXPIRED`) → trả lại lượt dùng cho coupon (và cho user), y hệt nguyên tắc release tồn kho.
+- Order dùng coupon **đã thanh toán** rồi mới hủy/refund → lượt dùng coi như đã tiêu, **không hoàn lại** — nhất quán với nguyên tắc "cancel sau payment: available không tự tăng lại" (mục 0.9), coupon không có khái niệm "nhập lại" giống hàng tồn kho.
+- Admin sửa `usage_limit` (hạ xuống) trong lúc đang có request reserve chạy đồng thời → bảo vệ bằng `@Version` optimistic lock trên chính hàng `coupons` khi admin ghi đè — tách biệt với conditional UPDATE ở hot path (đúng 2-cơ-chế-song-song đã áp dụng cho Inventory: `WHERE` clause bảo vệ hot path, `@Version` bảo vệ đường ghi đè thủ công).
+
+### 6.3 Business Rules chốt
+
+**Thời điểm validate + giữ chỗ coupon: tại CHECKOUT, không phải lúc thêm giỏ hàng** — nhất quán với nguyên tắc "giá đóng băng lúc checkout" (Cart không snapshot giá, Order mới snapshot). `discount_amount` được tính và ghi cố định vào `orders` ngay khi tạo order, không tính lại sau đó.
+
+**Coupon dùng cơ chế reserve/commit/release y hệt Inventory** (mục 0.9), áp trên cặp cột
+`usage_reserved`/`usage_committed` thay vì `available`/`reserved`:
+
+| Event | usage_reserved | usage_committed |
+|---|---|---|
+| Checkout (giữ chỗ coupon) → `PENDING_PAYMENT` | ↑ | — |
+| Payment success → `CONFIRMED` | ↓ | ↑ (đã tính là dùng thật) |
+| `PAYMENT_EXPIRED` / Cancel trước payment | ↓ (trả lại) | — |
+| Cancel sau payment (`CONFIRMED`/`PACKED` trở đi) | — | Không giảm — đã tiêu |
+
+Slot còn trống = `usage_limit IS NULL OR usage_reserved + usage_committed < usage_limit`.
+
+**`orders` sở hữu trực tiếp kết quả áp dụng coupon** (giống cách `orders` đã tự giữ
+`shipping_recipient_name`/`total_amount` — không tách sang module riêng): thêm `coupon_code`
+(snapshot, không FK) + `discount_amount`. Lý do không FK: cùng nguyên tắc `order_items.product_id`
+— Order cần giữ lịch sử đúng những gì khách đã thấy lúc đặt hàng, kể cả khi coupon sau đó bị admin
+sửa/xóa. Chi tiết đầy đủ (ai dùng, lúc nào, trạng thái reserve/commit) thuộc về bảng
+`coupon_redemptions` của module Coupon, `orders` chỉ giữ đúng phần cần cho hiển thị/tính tiền.
+
+**`payments.amount` không đổi cách tính** — vẫn lấy nguyên `orders.total_amount` (đã là giá sau
+discount, tính 1 lần lúc checkout). Payment module không cần biết khái niệm coupon tồn tại.
+
+**Giao tiếp module**: `OrderService.checkout()` gọi `CouponService.reserve(user, code, cartTotal)`
+qua service interface (không query thẳng repository của Coupon), nằm trong cùng transaction hiện
+có của checkout (thuần DB, không có network call nên không vi phạm nguyên tắc "không giữ transaction
+khi gọi ngoài" đã áp dụng cho VNPay). Giữ nhất quán gọi trực tiếp qua interface như toàn bộ hệ thống
+— **không** dùng `ApplicationEventPublisher` cho riêng module này dù có thể, vì trộn 2 phong cách
+giao tiếp (gọi trực tiếp cho phần lớn hệ thống, event riêng cho 1 module) làm code khó đoán hơn là
+lợi ích mang lại ở quy mô hiện tại.
+
+### 6.4 Concurrency — vì sao unique constraint thay vì đếm-rồi-chèn
+
+Giới hạn "mỗi user 1 lần/coupon" **không** dùng pattern SELECT COUNT rồi INSERT nếu đạt — 2 request
+đồng thời của cùng 1 user có thể cùng đọc count=0 trước khi request nào kịp INSERT (race giống hệt
+lớp học ở mục IPN idempotency, mục 0.6: "check + lưu phải cùng 1 bước atomic"). Giải pháp: partial
+unique index chặn ở tầng DB:
+
+```sql
+CREATE UNIQUE INDEX uq_coupon_redemptions_active
+    ON coupon_redemptions (coupon_id, user_id)
+    WHERE status IN ('RESERVED', 'COMMITTED');
+```
+
+`CouponServiceImpl.reserve()` cứ `INSERT` thẳng, bắt `DataIntegrityViolationException` (vi phạm
+unique) → ném `CouponAlreadyUsedException` — không có bước kiểm tra riêng trước INSERT. Đây là kỹ
+thuật "constraint-first, catch-exception" đã dùng cho `payment_webhook_events` (mục 0.6), áp dụng
+lại ở đây cho đúng loại race condition tương tự.
+
+Giới hạn global `usage_limit` dùng conditional `UPDATE ... WHERE usage_reserved + usage_committed <
+usage_limit OR usage_limit IS NULL` — đúng kỹ thuật đã dùng cho `inventory.quantity_available`.
+
+### 6.5 API Endpoint (đề xuất)
+
+```
+COUPON (customer)
+POST   /api/coupons/validate      (body: code, cartTotal — CHỈ kiểm tra + tính discount preview,
+                                    KHÔNG reserve, dùng cho FE hiển thị trước khi checkout)
+
+ORDER (mở rộng CheckoutRequest hiện có)
+POST   /api/orders/checkout       (thêm field tùy chọn couponCode — reserve thật sự nằm trong
+                                    transaction checkout, không phải endpoint riêng)
+
+ADMIN
+POST   /api/admin/coupons
+PATCH  /api/admin/coupons/{id}
+PATCH  /api/admin/coupons/{id}/status         (ACTIVE/INACTIVE — soft toggle, không DELETE)
+GET    /api/admin/coupons                     (pagination ngay từ đầu — bài học từ v1 audit,
+                                                không để list endpoint thiếu Pageable rồi vá sau)
+GET    /api/admin/coupons/{id}/redemptions    (lịch sử dùng, pagination)
+```
+
+### 6.6 Schema
+
+```
+coupons
+- id (PK), code (unique), discount_type (enum: PERCENTAGE, FIXED_AMOUNT)
+- discount_value (numeric), max_discount_amount (nullable — chỉ có ý nghĩa với PERCENTAGE)
+- min_order_amount (numeric, default 0)
+- usage_limit (nullable int — null = không giới hạn)
+- usage_reserved (int, default 0), usage_committed (int, default 0)
+- status (enum: ACTIVE, INACTIVE)
+- starts_at (nullable), ends_at (nullable)
+- version (optimistic lock — @Version, bảo vệ đường admin sửa tay, xem mục 6.2)
+- created_at, updated_at
+
+coupon_redemptions
+- id (PK), coupon_id (FK → coupons.id — cùng module, giống Refund → Payment)
+- order_id (reference, không FK — Order là module giao dịch cốt lõi, cùng quy tắc với
+  payments.order_id/refunds.order_id/deliveries.order_id)
+- user_id (FK → users.id — module nền, giống Review → User)
+- discount_amount_snapshot (numeric — số tiền giảm thực tế, để đối soát độc lập với orders.discount_amount)
+- status (enum: RESERVED, COMMITTED, RELEASED)
+- created_at, updated_at
+
+UNIQUE (coupon_id, user_id) WHERE status IN ('RESERVED', 'COMMITTED')   -- xem mục 6.4
+
+orders (thêm cột, không tạo bảng mới)
+- coupon_code (nullable, snapshot — không FK)
+- discount_amount (numeric, default 0)
+```
+
+Index gợi ý: `coupons(code)` unique (đã có qua constraint), `coupon_redemptions(order_id)` cho
+đường release/commit tra theo order, `coupon_redemptions(coupon_id, user_id)` (đã có qua unique
+index ở trên, đủ dùng cho tra cứu per-user).
+
+### 6.7 Điểm cần bạn quyết định lại nếu không đồng ý
+
+- Đã giả định **percentage discount có cap tối đa tùy chọn** — nếu muốn bắt buộc luôn phải có cap
+  cho `PERCENTAGE` (tránh admin lỡ tạo coupon giảm 100% không giới hạn số tiền), cần đổi
+  `max_discount_amount` từ nullable sang bắt buộc khi `discount_type = PERCENTAGE`.
+- Đã giả định **preview không cần auth** (khách chưa đăng nhập vẫn xem được discount) — nếu coupon
+  chỉ dành cho user đã đăng nhập (VD coupon sinh nhật cá nhân hóa), `/api/coupons/validate` cần
+  `@AuthenticationPrincipal` bắt buộc, không phải optional.
+- Đã chọn **1 coupon/order, không stacking** — nếu có nhu cầu thật (VD coupon giảm giá + coupon
+  freeship cộng dồn), đây là thiết kế lại từ đầu (thứ tự áp dụng, tổng discount tối đa), không phải
+  mở rộng nhỏ từ thiết kế hiện tại.

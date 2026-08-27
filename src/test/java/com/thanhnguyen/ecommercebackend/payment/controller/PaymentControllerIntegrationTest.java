@@ -135,7 +135,7 @@ class PaymentControllerIntegrationTest {
                         .header("Authorization", "Bearer " + customerToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new CheckoutRequest("Nguyen Van A", "0900000000", "123 Test Street", null))))
+                                new CheckoutRequest("Nguyen Van A", "0900000000", "123 Test Street", null, null))))
                 .andExpect(status().isCreated())
                 .andReturn();
         return objectMapper.readTree(checkoutResult.getResponse().getContentAsString())

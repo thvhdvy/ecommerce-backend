@@ -45,6 +45,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/products", "/api/products/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/payments/vnpay-ipn").permitAll()
+                        // Preview discount truoc checkout — khong reserve, khong can biet danh tinh
+                        // (design doc v2 muc 6.7). Neu sau nay co coupon ca nhan hoa can auth bat buoc.
+                        .requestMatchers(HttpMethod.POST, "/api/coupons/validate").permitAll()
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers("/actuator/**").hasRole("ADMIN")

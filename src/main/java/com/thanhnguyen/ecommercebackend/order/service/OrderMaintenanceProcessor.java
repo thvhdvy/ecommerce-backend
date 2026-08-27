@@ -1,5 +1,6 @@
 package com.thanhnguyen.ecommercebackend.order.service;
 
+import com.thanhnguyen.ecommercebackend.coupon.service.CouponService;
 import com.thanhnguyen.ecommercebackend.inventory.service.InventoryService;
 import com.thanhnguyen.ecommercebackend.order.entity.Order;
 import com.thanhnguyen.ecommercebackend.order.entity.OrderItem;
@@ -30,6 +31,7 @@ class OrderMaintenanceProcessor {
     private final OrderRepository orderRepository;
     private final OrderStatusHistoryRepository orderStatusHistoryRepository;
     private final InventoryService inventoryService;
+    private final CouponService couponService;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     void expireOne(Long orderId, int timeoutMinutes) {
@@ -41,6 +43,7 @@ class OrderMaintenanceProcessor {
         for (OrderItem item : order.getItems()) {
             inventoryService.releaseStock(item.getProductId(), item.getQuantity());
         }
+        couponService.release(order.getId());
 
         order.setStatus(OrderStatus.PAYMENT_EXPIRED);
         orderRepository.save(order);

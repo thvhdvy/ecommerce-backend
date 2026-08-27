@@ -52,6 +52,15 @@ public class Order {
     @Column(nullable = false)
     private BigDecimal totalAmount;
 
+    // Snapshot (khong FK) — Order la module giao dich cot loi, giu lai dung nhung gi khach da thay
+    // luc dat hang ke ca khi coupon sau nay bi admin sua/xoa (cung nguyen tac voi order_items.product_id,
+    // xem design doc v2 muc 6.3). null = order khong dung coupon.
+    @Column(name = "coupon_code")
+    private String couponCode;
+
+    @Column(name = "discount_amount", nullable = false)
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+
     @Column(nullable = false)
     private String shippingRecipientName;
 

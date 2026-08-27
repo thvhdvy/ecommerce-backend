@@ -4,6 +4,7 @@ import com.thanhnguyen.ecommercebackend.cart.dto.CartItemResponse;
 import com.thanhnguyen.ecommercebackend.cart.dto.CartResponse;
 import com.thanhnguyen.ecommercebackend.cart.service.CartService;
 import com.thanhnguyen.ecommercebackend.common.PageResponse;
+import com.thanhnguyen.ecommercebackend.coupon.service.CouponService;
 import com.thanhnguyen.ecommercebackend.inventory.service.InventoryService;
 import com.thanhnguyen.ecommercebackend.order.dto.CheckoutRequest;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemResponse;
@@ -65,6 +66,7 @@ public class OrderServiceImpl implements OrderService {
     private final PaymentService paymentService;
     private final SellerService sellerService;
     private final OrderMaintenanceProcessor maintenanceProcessor;
+    private final CouponService couponService;
 
     // PaymentServiceImpl phụ thuộc ngược lại OrderService (confirmPayment/markPaymentFailed) —
     // @Lazy ở chiều Order->Payment (chỉ dùng khi cancel order đã CONFIRMED) để phá vòng lặp khởi tạo bean.
@@ -76,7 +78,8 @@ public class OrderServiceImpl implements OrderService {
             InventoryService inventoryService,
             @Lazy PaymentService paymentService,
             SellerService sellerService,
-            OrderMaintenanceProcessor maintenanceProcessor) {
+            OrderMaintenanceProcessor maintenanceProcessor,
+            CouponService couponService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
@@ -85,6 +88,7 @@ public class OrderServiceImpl implements OrderService {
         this.paymentService = paymentService;
         this.sellerService = sellerService;
         this.maintenanceProcessor = maintenanceProcessor;
+        this.couponService = couponService;
     }
 
     @Override
@@ -103,18 +107,30 @@ public class OrderServiceImpl implements OrderService {
         order.setShippingAddress(request.getShippingAddress());
         order.setShippingNote(request.getShippingNote());
 
-        BigDecimal totalAmount = BigDecimal.ZERO;
+        BigDecimal subtotal = BigDecimal.ZERO;
         for (CartItemResponse item : cart.getItems()) {
             inventoryService.reserveStock(item.getProductId(), item.getQuantity());
 
             order.getItems().add(new OrderItem(
                     order, item.getProductId(), item.getSellerId(),
                     item.getProductName(), item.getUnitPrice(), item.getQuantity()));
-            totalAmount = totalAmount.add(item.getSubtotal());
+            subtotal = subtotal.add(item.getSubtotal());
         }
-        order.setTotalAmount(totalAmount);
+        order.setTotalAmount(subtotal);
 
+        // Save truoc de lay order.id that (IDENTITY) — coupon_redemptions.order_id can 1 id da ton
+        // tai (design doc v2 muc 6.3). Neu co coupon, save lai lan 2 sau khi ap discount.
         Order saved = orderRepository.save(order);
+
+        if (request.getCouponCode() != null && !request.getCouponCode().isBlank()) {
+            BigDecimal discountAmount = couponService.reserve(
+                    currentUser, request.getCouponCode(), saved.getId(), subtotal);
+            saved.setCouponCode(request.getCouponCode());
+            saved.setDiscountAmount(discountAmount);
+            saved.setTotalAmount(subtotal.subtract(discountAmount));
+            saved = orderRepository.save(saved);
+        }
+
         orderStatusHistoryRepository.save(
                 new OrderStatusHistory(saved, null, OrderStatus.PENDING_PAYMENT, currentUser, null));
 
@@ -175,6 +191,7 @@ public class OrderServiceImpl implements OrderService {
             for (OrderItem item : order.getItems()) {
                 inventoryService.releaseStock(item.getProductId(), item.getQuantity());
             }
+            couponService.release(order.getId());
         }
 
         order.setStatus(OrderStatus.CANCELLED);
@@ -260,6 +277,7 @@ public class OrderServiceImpl implements OrderService {
         for (OrderItem item : order.getItems()) {
             inventoryService.commitReservedStock(item.getProductId(), item.getQuantity());
         }
+        couponService.commit(order.getId());
 
         OrderStatus previousStatus = order.getStatus();
         order.setStatus(OrderStatus.CONFIRMED);
@@ -486,7 +504,9 @@ public class OrderServiceImpl implements OrderService {
                 order.getShippingNote(),
                 itemResponses,
                 order.getCreatedAt(),
-                order.getUpdatedAt()
+                order.getUpdatedAt(),
+                order.getCouponCode(),
+                order.getDiscountAmount()
         );
     }
 
