@@ -18,6 +18,12 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+// Namespace /api/admin/orders/** duoc chia se co chu dich giua 3 controller theo module ownership
+// (order/payment/shipping — xem design doc muc 0.7): moi controller so huu dung cac sub-path thuoc
+// nghiep vu module do (order: list/cancel; payment: AdminPaymentController — refund/retry;
+// shipping: AdminShippingController — assign-shipper/confirm-delivery). Day la REST sub-resource
+// hop le (action tren order do module khac xu ly), khong phai loi to chuc — nhung can luu y khi
+// tim "endpoint nao xu ly gi tren order" phai xem ca 3 file.
 @RestController
 @RequestMapping("/api/admin/orders")
 @RequiredArgsConstructor

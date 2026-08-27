@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+// So huu sub-path /assign-shipper, /confirm-delivery cua namespace /api/admin/orders/** — xem
+// AdminOrderController cho ly do namespace nay duoc chia se giua order/payment/shipping.
 @RestController
 @RequestMapping("/api/admin/orders")
 @RequiredArgsConstructor

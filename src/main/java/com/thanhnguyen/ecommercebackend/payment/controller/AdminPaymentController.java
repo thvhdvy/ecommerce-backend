@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+// So huu sub-path /refund/retry cua namespace /api/admin/orders/** — xem AdminOrderController
+// cho ly do namespace nay duoc chia se giua order/payment/shipping.
 @RestController
 @RequestMapping("/api/admin/orders")
 @RequiredArgsConstructor
