@@ -3,6 +3,7 @@ package com.thanhnguyen.ecommercebackend.order.service;
 import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.order.dto.CheckoutRequest;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemResponse;
+import com.thanhnguyen.ecommercebackend.order.dto.OrderItemReturnInfo;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderResponse;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import org.springframework.data.domain.Pageable;
@@ -78,4 +79,11 @@ public interface OrderService {
 
     /** Admin: xem toàn bộ order trong hệ thống. */
     PageResponse<OrderResponse> listAllOrders(Pageable pageable);
+
+    /**
+     * Dùng bởi Return module: đọc thông tin order_item cần cho validate eligibility + tính refund
+     * (ownership, trạng thái order, thời điểm DELIVERED, total/discount để prorate — design doc v2
+     * mục 7.3/7.4). Trả về null nếu order_item không tồn tại.
+     */
+    OrderItemReturnInfo getOrderItemForReturn(Long orderItemId);
 }

@@ -63,6 +63,16 @@ public class InventoryServiceImpl implements InventoryService {
 
     @Override
     @Transactional
+    public void restock(Long productId, int quantity) {
+        int updated = inventoryRepository.restockStock(productId, quantity);
+        if (updated == 0) {
+            throw new InventoryNotFoundException(productId);
+        }
+        syncStockFlag(productId);
+    }
+
+    @Override
+    @Transactional
     public InventoryResponse updateStock(Long productId, int newQuantityAvailable) {
         Inventory inventory = inventoryRepository.findByProductId(productId)
                 .orElseThrow(() -> new InventoryNotFoundException(productId));

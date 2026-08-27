@@ -61,6 +61,32 @@ class RefundLedger {
                 payment.getVnpTxnRef(), payment.getVnpTransactionNo(), payment.getCreatedAt());
     }
 
+    // Return module: hoan 1 PHAN tien (amount da prorate theo item, khong phai toan bo remaining
+    // nhu initiate()) — validate amount khong vuot phan chua hoan con lai, giu dung invariant
+    // "tong refunds.amount khong vuot payments.amount" (design doc muc 0.6).
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    RefundInitiation initiatePartial(Long orderId, BigDecimal amount, String reason, Long returnRequestId) {
+        Payment payment = paymentRepository.findByOrderId(orderId)
+                .orElseThrow(() -> new PaymentNotFoundException(orderId));
+
+        if (payment.getStatus() != PaymentStatus.SUCCEEDED) {
+            throw new RefundNotAllowedException("Payment not succeeded, cannot refund order " + orderId);
+        }
+
+        BigDecimal alreadyRefunded = refundRepository.sumAmountByPaymentIdAndStatusIn(
+                payment.getId(), List.of(
+                        RefundStatus.REFUND_PENDING, RefundStatus.REFUNDED, RefundStatus.REFUND_MANUALLY_RESOLVED));
+        BigDecimal remaining = payment.getAmount().subtract(alreadyRefunded);
+        if (amount.compareTo(remaining) > 0) {
+            throw new RefundNotAllowedException(
+                    "Requested refund amount exceeds remaining refundable amount for order " + orderId);
+        }
+
+        Refund refund = refundRepository.save(new Refund(payment, orderId, amount, reason, returnRequestId));
+        return new RefundInitiation(refund.getId(), amount,
+                payment.getVnpTxnRef(), payment.getVnpTransactionNo(), payment.getCreatedAt());
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     void finalizeResult(Long refundId, Long orderId, VnpayRefundResult result) {
         Refund refund = refundRepository.findById(refundId)

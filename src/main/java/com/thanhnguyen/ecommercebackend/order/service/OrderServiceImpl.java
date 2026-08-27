@@ -8,6 +8,7 @@ import com.thanhnguyen.ecommercebackend.coupon.service.CouponService;
 import com.thanhnguyen.ecommercebackend.inventory.service.InventoryService;
 import com.thanhnguyen.ecommercebackend.order.dto.CheckoutRequest;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemResponse;
+import com.thanhnguyen.ecommercebackend.order.dto.OrderItemReturnInfo;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderResponse;
 import com.thanhnguyen.ecommercebackend.order.entity.Order;
 import com.thanhnguyen.ecommercebackend.order.entity.OrderItem;
@@ -459,6 +460,32 @@ public class OrderServiceImpl implements OrderService {
     @Transactional(readOnly = true)
     public PageResponse<OrderResponse> listAllOrders(Pageable pageable) {
         return PageResponse.from(orderRepository.findAll(pageable).map(this::toResponse));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public OrderItemReturnInfo getOrderItemForReturn(Long orderItemId) {
+        OrderItem item = orderItemRepository.findById(orderItemId).orElse(null);
+        if (item == null) {
+            return null;
+        }
+        Order order = item.getOrder();
+
+        // Lay lan gan nhat order chuyen sang DELIVERED (khong dung updatedAt — co the bi ghi de boi
+        // transition khac sau do, cung ly do da ap dung cho Report - design doc muc 0.9/7.1).
+        LocalDateTime deliveredAt = orderStatusHistoryRepository
+                .findAllByOrder_IdOrderByCreatedAtDesc(order.getId())
+                .stream()
+                .filter(h -> h.getToStatus() == OrderStatus.DELIVERED)
+                .findFirst()
+                .map(OrderStatusHistory::getCreatedAt)
+                .orElse(null);
+
+        return new OrderItemReturnInfo(
+                item.getId(), order.getId(), order.getCustomer().getId(), item.getSellerId(),
+                item.getProductId(), item.getProductNameSnapshot(), item.getUnitPriceSnapshot(),
+                item.getQuantity(), order.getStatus(), order.getTotalAmount(), order.getDiscountAmount(),
+                deliveredAt);
     }
 
     /**

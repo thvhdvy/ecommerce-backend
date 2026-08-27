@@ -173,6 +173,19 @@ public class PaymentServiceImpl implements PaymentService {
         refundLedger.finalizeResult(initiation.refundId(), orderId, result);
     }
 
+    // Cung nguyen tac voi refund(): khong @Transactional, requestRefund() la loi goi mang toi VNPay.
+    @Override
+    public boolean refundPartial(Long orderId, BigDecimal amount, String reason, String clientIp, Long returnRequestId) {
+        RefundLedger.RefundInitiation initiation = refundLedger.initiatePartial(orderId, amount, reason, returnRequestId);
+
+        VnpayRefundResult result = vnpayClient.requestRefund(
+                initiation.vnpTxnRef(), initiation.vnpTransactionNo(), initiation.paymentCreatedAt(),
+                initiation.amount(), reason, clientIp);
+
+        refundLedger.finalizeResult(initiation.refundId(), orderId, result);
+        return result.success();
+    }
+
     @Override
     public PageResponse<RefundResponse> listFailedRefunds(Pageable pageable) {
         return PageResponse.from(refundLedger.listFailedRefunds(pageable).map(this::toRefundResponse));

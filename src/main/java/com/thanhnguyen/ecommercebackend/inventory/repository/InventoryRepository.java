@@ -32,4 +32,10 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
             + "i.updatedAt = CURRENT_TIMESTAMP "
             + "WHERE i.productId = :productId AND i.quantityReserved >= :qty")
     int commitReservedStock(@Param("productId") Long productId, @Param("qty") int qty);
+
+    // Return module: hang vat ly quay lai kho, khong dung reserved (xem InventoryService.restock).
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Inventory i SET i.quantityAvailable = i.quantityAvailable + :qty, i.version = i.version + 1, "
+            + "i.updatedAt = CURRENT_TIMESTAMP WHERE i.productId = :productId")
+    int restockStock(@Param("productId") Long productId, @Param("qty") int qty);
 }

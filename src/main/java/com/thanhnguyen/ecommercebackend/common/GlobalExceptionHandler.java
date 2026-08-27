@@ -26,6 +26,11 @@ import com.thanhnguyen.ecommercebackend.product.exception.MultiplePrimaryImagesE
 import com.thanhnguyen.ecommercebackend.user.exception.NotASellerException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductOwnershipException;
+import com.thanhnguyen.ecommercebackend.returns.exception.ReturnAlreadyActiveException;
+import com.thanhnguyen.ecommercebackend.returns.exception.ReturnNotEligibleException;
+import com.thanhnguyen.ecommercebackend.returns.exception.ReturnNotFoundException;
+import com.thanhnguyen.ecommercebackend.returns.exception.ReturnOwnershipException;
+import com.thanhnguyen.ecommercebackend.returns.exception.ReturnStatusNotAllowedException;
 import com.thanhnguyen.ecommercebackend.review.exception.ReviewAlreadyExistsException;
 import com.thanhnguyen.ecommercebackend.review.exception.ReviewNotEligibleException;
 import com.thanhnguyen.ecommercebackend.review.exception.ReviewNotFoundException;
@@ -345,6 +350,36 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleCouponAlreadyUsed(CouponAlreadyUsedException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("COUPON_ALREADY_USED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ReturnNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleReturnNotFound(ReturnNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("RETURN_NOT_FOUND", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ReturnOwnershipException.class)
+    public ResponseEntity<ApiResponse<Void>> handleReturnOwnership(ReturnOwnershipException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error("RETURN_OWNERSHIP_VIOLATION", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ReturnNotEligibleException.class)
+    public ResponseEntity<ApiResponse<Void>> handleReturnNotEligible(ReturnNotEligibleException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("RETURN_NOT_ELIGIBLE", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ReturnAlreadyActiveException.class)
+    public ResponseEntity<ApiResponse<Void>> handleReturnAlreadyActive(ReturnAlreadyActiveException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("RETURN_ALREADY_ACTIVE", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ReturnStatusNotAllowedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleReturnStatusNotAllowed(ReturnStatusNotAllowedException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("RETURN_STATUS_NOT_ALLOWED", ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

@@ -52,6 +52,11 @@ public class Refund {
     @Column(name = "resolution_note")
     private String resolutionNote;
 
+    // Reference, khong FK — chi khac null khi refund nay phat sinh tu module Return (phan biet voi
+    // refund do cancel order thong thuong, design doc v2 muc 7.3).
+    @Column(name = "return_request_id")
+    private Long returnRequestId;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -67,6 +72,11 @@ public class Refund {
         this.amount = amount;
         this.reason = reason;
         this.status = RefundStatus.REFUND_PENDING;
+    }
+
+    public Refund(Payment payment, Long orderId, BigDecimal amount, String reason, Long returnRequestId) {
+        this(payment, orderId, amount, reason);
+        this.returnRequestId = returnRequestId;
     }
 
     @PrePersist
