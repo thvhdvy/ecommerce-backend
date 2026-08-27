@@ -205,8 +205,8 @@ class PayoutControllerIntegrationTest {
     }
 
     /** Checkout -> intent -> IPN thanh cong -> CONFIRMED -> pack -> assign shipper -> SHIPPED -> DELIVERED. Tra ve [orderId, orderItemId, deliveryId]. */
-    private long[] buildDeliveredOrder(String customerToken, String sellerToken, String adminToken, Long shipperId,
-                                        Long productId, int quantity, String vnpAmount) throws Exception {
+    private long[] buildDeliveredOrder(String customerToken, String sellerToken, String adminToken, Long sellerId,
+                                        Long shipperId, Long productId, int quantity, String vnpAmount) throws Exception {
         mockMvc.perform(post("/api/cart/items")
                         .header("Authorization", "Bearer " + customerToken)
                         .contentType(APPLICATION_JSON)
@@ -255,7 +255,7 @@ class PayoutControllerIntegrationTest {
         MvcResult assignResult = mockMvc.perform(patch("/api/admin/orders/" + orderId + "/assign-shipper")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(shipperId))))
+                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(sellerId, shipperId))))
                 .andExpect(status().isOk())
                 .andReturn();
         String deliveryId = objectMapper.readTree(assignResult.getResponse().getContentAsString())
@@ -284,7 +284,7 @@ class PayoutControllerIntegrationTest {
         User shipper = userRepository.findByEmail("payout-shipper-earn1@example.com").orElseThrow();
         String adminToken = registerAndLogin("payout-admin-action-earn1@example.com", UserRole.ADMIN);
 
-        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, shipper.getId(), productId, 2, "10000");
+        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, sellerId, shipper.getId(), productId, 2, "10000");
         markDelivered(shipperToken, ids[2]);
 
         // Backdate qua raw SQL (khong qua JPA save() de tranh @PreUpdate ghi de lai now()) de
@@ -351,7 +351,7 @@ class PayoutControllerIntegrationTest {
         User shipper = userRepository.findByEmail("payout-shipper-adj1@example.com").orElseThrow();
         String adminToken = registerAndLogin("payout-admin-action-adj1@example.com", UserRole.ADMIN);
 
-        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, shipper.getId(), productId, 1, "4000");
+        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, sellerId, shipper.getId(), productId, 1, "4000");
         markDelivered(shipperToken, ids[2]);
         // KHONG auto-complete — order van con DELIVERED, seller_balances chua co dong EARNED nao.
 

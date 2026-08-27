@@ -104,14 +104,18 @@ class ReturnControllerIntegrationTest {
         return data.get("accessToken").asText();
     }
 
-    private String becomeSeller(String suffix) throws Exception {
+    /** Tao seller, tra ve [sellerToken, sellerId]. */
+    private Object[] becomeSeller(String suffix) throws Exception {
         String sellerToken = registerAndLogin("return-seller-" + suffix + "@example.com", UserRole.CUSTOMER);
-        mockMvc.perform(post("/api/sellers")
+        MvcResult result = mockMvc.perform(post("/api/sellers")
                         .header("Authorization", "Bearer " + sellerToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new BecomeSellerRequest("Shop-" + suffix, null))))
-                .andExpect(status().isCreated());
-        return sellerToken;
+                .andExpect(status().isCreated())
+                .andReturn();
+        Long sellerId = objectMapper.readTree(result.getResponse().getContentAsString())
+                .get("data").get("id").asLong();
+        return new Object[]{sellerToken, sellerId};
     }
 
     private Long createProductWithStock(String sellerToken, String suffix, BigDecimal price, int stock) throws Exception {
@@ -188,8 +192,8 @@ class ReturnControllerIntegrationTest {
     }
 
     /** Checkout -> intent -> IPN thanh cong -> CONFIRMED -> pack -> assign shipper -> SHIPPED -> DELIVERED. Tra ve [orderId, orderItemId]. */
-    private long[] buildDeliveredOrder(String customerToken, String sellerToken, String adminToken, Long shipperId,
-                                        Long productId, int quantity, String vnpAmount) throws Exception {
+    private long[] buildDeliveredOrder(String customerToken, String sellerToken, String adminToken, Long sellerId,
+                                        Long shipperId, Long productId, int quantity, String vnpAmount) throws Exception {
         mockMvc.perform(post("/api/cart/items")
                         .header("Authorization", "Bearer " + customerToken)
                         .contentType(APPLICATION_JSON)
@@ -238,7 +242,7 @@ class ReturnControllerIntegrationTest {
         MvcResult assignResult = mockMvc.perform(patch("/api/admin/orders/" + orderId + "/assign-shipper")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(shipperId))))
+                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(sellerId, shipperId))))
                 .andExpect(status().isOk())
                 .andReturn();
         String deliveryId = objectMapper.readTree(assignResult.getResponse().getContentAsString())
@@ -262,14 +266,16 @@ class ReturnControllerIntegrationTest {
                 .when(vnpayClient)
                 .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
 
-        String sellerToken = becomeSeller("golden1");
+        Object[] sellerInfo = becomeSeller("golden1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "golden1", new BigDecimal("50.00"), 10);
         String customerToken = registerAndLogin("return-customer-golden1@example.com", UserRole.CUSTOMER);
         String shipperToken = registerAndLogin("return-shipper-golden1@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("return-shipper-golden1@example.com").orElseThrow();
         String adminToken = registerAndLogin("return-admin-action-golden1@example.com", UserRole.ADMIN);
 
-        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, shipper.getId(), productId, 2, "10000");
+        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, sellerId, shipper.getId(), productId, 2, "10000");
         markDelivered(shipperToken, ids[2]);
 
         MvcResult createResult = mockMvc.perform(post("/api/returns")
@@ -301,14 +307,16 @@ class ReturnControllerIntegrationTest {
 
     @Test
     void create_shouldReturn400_whenOrderNotYetDelivered() throws Exception {
-        String sellerToken = becomeSeller("notdelivered1");
+        Object[] sellerInfo = becomeSeller("notdelivered1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "notdelivered1", new BigDecimal("30.00"), 5);
         String customerToken = registerAndLogin("return-customer-notdelivered1@example.com", UserRole.CUSTOMER);
         String shipperToken = registerAndLogin("return-shipper-notdelivered1@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("return-shipper-notdelivered1@example.com").orElseThrow();
         String adminToken = registerAndLogin("return-admin-action-notdelivered1@example.com", UserRole.ADMIN);
 
-        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, shipper.getId(), productId, 1, "3000");
+        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, sellerId, shipper.getId(), productId, 1, "3000");
         // Khong goi markDelivered — order dang SHIPPED.
 
         mockMvc.perform(post("/api/returns")
@@ -322,14 +330,16 @@ class ReturnControllerIntegrationTest {
 
     @Test
     void create_shouldReturn409_whenAnotherActiveRequestExistsForSameItem() throws Exception {
-        String sellerToken = becomeSeller("dup1");
+        Object[] sellerInfo = becomeSeller("dup1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "dup1", new BigDecimal("20.00"), 5);
         String customerToken = registerAndLogin("return-customer-dup1@example.com", UserRole.CUSTOMER);
         String shipperToken = registerAndLogin("return-shipper-dup1@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("return-shipper-dup1@example.com").orElseThrow();
         String adminToken = registerAndLogin("return-admin-action-dup1@example.com", UserRole.ADMIN);
 
-        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, shipper.getId(), productId, 1, "2000");
+        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, sellerId, shipper.getId(), productId, 1, "2000");
         markDelivered(shipperToken, ids[2]);
 
         mockMvc.perform(post("/api/returns")
@@ -350,14 +360,16 @@ class ReturnControllerIntegrationTest {
 
     @Test
     void approve_shouldReturn403_whenAnotherSellerTries() throws Exception {
-        String sellerToken = becomeSeller("ownercheck1");
+        Object[] sellerInfo = becomeSeller("ownercheck1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "ownercheck1", new BigDecimal("20.00"), 5);
         String customerToken = registerAndLogin("return-customer-ownercheck1@example.com", UserRole.CUSTOMER);
         String shipperToken = registerAndLogin("return-shipper-ownercheck1@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("return-shipper-ownercheck1@example.com").orElseThrow();
         String adminToken = registerAndLogin("return-admin-action-ownercheck1@example.com", UserRole.ADMIN);
 
-        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, shipper.getId(), productId, 1, "2000");
+        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, sellerId, shipper.getId(), productId, 1, "2000");
         markDelivered(shipperToken, ids[2]);
 
         MvcResult createResult = mockMvc.perform(post("/api/returns")
@@ -370,7 +382,7 @@ class ReturnControllerIntegrationTest {
         Long returnId = objectMapper.readTree(createResult.getResponse().getContentAsString())
                 .get("data").get("id").asLong();
 
-        String otherSellerToken = becomeSeller("ownercheck1-other");
+        String otherSellerToken = (String) becomeSeller("ownercheck1-other")[0];
 
         mockMvc.perform(patch("/api/seller/returns/" + returnId + "/approve")
                         .header("Authorization", "Bearer " + otherSellerToken))
@@ -380,14 +392,16 @@ class ReturnControllerIntegrationTest {
 
     @Test
     void cancel_shouldTransitionToCancelled_whenStillRequested() throws Exception {
-        String sellerToken = becomeSeller("cancel1");
+        Object[] sellerInfo = becomeSeller("cancel1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "cancel1", new BigDecimal("20.00"), 5);
         String customerToken = registerAndLogin("return-customer-cancel1@example.com", UserRole.CUSTOMER);
         String shipperToken = registerAndLogin("return-shipper-cancel1@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("return-shipper-cancel1@example.com").orElseThrow();
         String adminToken = registerAndLogin("return-admin-action-cancel1@example.com", UserRole.ADMIN);
 
-        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, shipper.getId(), productId, 1, "2000");
+        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, sellerId, shipper.getId(), productId, 1, "2000");
         markDelivered(shipperToken, ids[2]);
 
         MvcResult createResult = mockMvc.perform(post("/api/returns")
@@ -412,14 +426,16 @@ class ReturnControllerIntegrationTest {
                 .when(vnpayClient)
                 .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
 
-        String sellerToken = becomeSeller("retry1");
+        Object[] sellerInfo = becomeSeller("retry1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "retry1", new BigDecimal("40.00"), 5);
         String customerToken = registerAndLogin("return-customer-retry1@example.com", UserRole.CUSTOMER);
         String shipperToken = registerAndLogin("return-shipper-retry1@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("return-shipper-retry1@example.com").orElseThrow();
         String adminToken = registerAndLogin("return-admin-action-retry1@example.com", UserRole.ADMIN);
 
-        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, shipper.getId(), productId, 1, "4000");
+        long[] ids = buildDeliveredOrder(customerToken, sellerToken, adminToken, sellerId, shipper.getId(), productId, 1, "4000");
         markDelivered(shipperToken, ids[2]);
 
         MvcResult createResult = mockMvc.perform(post("/api/returns")

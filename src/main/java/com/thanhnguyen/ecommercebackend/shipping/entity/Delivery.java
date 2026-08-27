@@ -28,8 +28,13 @@ public class Delivery {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "order_id", nullable = false, unique = true)
+    @Column(name = "order_id", nullable = false)
     private Long orderId;
+
+    // Reference (khong FK) — cung nhom voi order_items.seller_id (design doc v2 muc 10.3).
+    // UNIQUE(order_id, seller_id) o DB: 1 seller trong 1 order chi co 1 delivery.
+    @Column(name = "seller_id", nullable = false)
+    private Long sellerId;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "shipper_id")
@@ -61,8 +66,9 @@ public class Delivery {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
-    public Delivery(Long orderId, User shipper) {
+    public Delivery(Long orderId, Long sellerId, User shipper) {
         this.orderId = orderId;
+        this.sellerId = sellerId;
         this.shipper = shipper;
         this.status = DeliveryStatus.ASSIGNED;
         this.retryCount = 0;

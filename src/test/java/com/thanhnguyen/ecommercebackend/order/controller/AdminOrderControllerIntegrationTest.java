@@ -107,13 +107,21 @@ class AdminOrderControllerIntegrationTest {
     }
 
     private String becomeSeller(String suffix) throws Exception {
+        return ((String) becomeSellerWithId(suffix)[0]);
+    }
+
+    /** Tao seller, tra ve [sellerToken, sellerId] — dung khi test can sellerId (VD assign-shipper). */
+    private Object[] becomeSellerWithId(String suffix) throws Exception {
         String sellerToken = registerAndLogin("admin-order-seller-" + suffix + "@example.com", UserRole.CUSTOMER);
-        mockMvc.perform(post("/api/sellers")
+        MvcResult result = mockMvc.perform(post("/api/sellers")
                         .header("Authorization", "Bearer " + sellerToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new BecomeSellerRequest("Shop-" + suffix, null))))
-                .andExpect(status().isCreated());
-        return sellerToken;
+                .andExpect(status().isCreated())
+                .andReturn();
+        Long sellerId = objectMapper.readTree(result.getResponse().getContentAsString())
+                .get("data").get("id").asLong();
+        return new Object[]{sellerToken, sellerId};
     }
 
     private Long createProductWithStock(String sellerToken, String suffix, BigDecimal price, int stock) throws Exception {
@@ -375,7 +383,9 @@ class AdminOrderControllerIntegrationTest {
 
     @Test
     void forceCancel_shouldReturn409_whenOrderAlreadyShipped() throws Exception {
-        String sellerToken = becomeSeller("shipped1");
+        Object[] sellerInfo = becomeSellerWithId("shipped1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "shipped1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("admin-order-customer-shipped1@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
@@ -387,7 +397,7 @@ class AdminOrderControllerIntegrationTest {
         mockMvc.perform(patch("/api/admin/orders/" + orderId + "/assign-shipper")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(shipper.getId()))))
+                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(sellerId, shipper.getId()))))
                 .andExpect(status().isOk());
 
         mockMvc.perform(post("/api/admin/orders/" + orderId + "/cancel")

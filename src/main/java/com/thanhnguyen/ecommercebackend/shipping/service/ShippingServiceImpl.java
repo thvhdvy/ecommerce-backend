@@ -2,8 +2,6 @@ package com.thanhnguyen.ecommercebackend.shipping.service;
 
 import org.springframework.data.domain.Pageable;
 import com.thanhnguyen.ecommercebackend.common.PageResponse;
-import com.thanhnguyen.ecommercebackend.order.dto.OrderResponse;
-import com.thanhnguyen.ecommercebackend.order.entity.OrderStatus;
 import com.thanhnguyen.ecommercebackend.order.service.OrderService;
 import com.thanhnguyen.ecommercebackend.shipping.dto.DeliveryResponse;
 import com.thanhnguyen.ecommercebackend.shipping.dto.DeliveryStatusUpdateRequest;
@@ -24,14 +22,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class ShippingServiceImpl implements ShippingService {
 
-    private static final Set<OrderStatus> ASSIGNABLE_ORDER_STATUSES = Set.of(OrderStatus.PACKED, OrderStatus.SHIPPED);
     private static final Set<DeliveryStatus> IN_PROGRESS_STATUSES = Set.of(DeliveryStatus.ASSIGNED, DeliveryStatus.IN_TRANSIT);
     private static final int MAX_RETRY = 1;
 
@@ -42,11 +40,11 @@ public class ShippingServiceImpl implements ShippingService {
 
     @Override
     @Transactional
-    public DeliveryResponse assignShipper(Long orderId, Long shipperId, User actor) {
-        OrderResponse order = orderService.getOrderById(orderId);
-        if (!ASSIGNABLE_ORDER_STATUSES.contains(order.getStatus())) {
-            throw new DeliveryNotAllowedException(
-                    "Order must be PACKED or SHIPPED to assign a shipper, current status: " + order.getStatus());
+    public DeliveryResponse assignShipper(Long orderId, Long sellerId, Long shipperId, User actor) {
+        // Gate theo tung seller doc lap (design doc v2 muc 10.4) — khong con dua vao order.status
+        // aggregate nhu v1, vi seller khac co the chua pack xong ma khong duoc chan seller nay.
+        if (!orderService.areSellerItemsPacked(orderId, sellerId)) {
+            throw new DeliveryNotAllowedException("Seller's order items must be fully PACKED before assigning a shipper");
         }
 
         // Lookup qua UserService (khong query UserRepository truc tiep — module boundary);
@@ -56,13 +54,12 @@ public class ShippingServiceImpl implements ShippingService {
             throw new NotAShipperException();
         }
 
-        Delivery delivery = deliveryRepository.findByOrderId(orderId).orElse(null);
+        Delivery delivery = deliveryRepository.findByOrderIdAndSellerId(orderId, sellerId).orElse(null);
         if (delivery == null) {
-            delivery = new Delivery(orderId, shipper);
+            delivery = new Delivery(orderId, sellerId, shipper);
             deliveryRepository.save(delivery);
             deliveryStatusHistoryRepository.save(
                     new DeliveryStatusHistory(delivery, null, DeliveryStatus.ASSIGNED, actor, "Shipper assigned"));
-            orderService.markShipped(orderId, actor);
         } else {
             DeliveryStatus previousStatus = delivery.getStatus();
             delivery.setShipper(shipper);
@@ -72,6 +69,7 @@ public class ShippingServiceImpl implements ShippingService {
                     new DeliveryStatusHistory(delivery, previousStatus, DeliveryStatus.ASSIGNED, actor, "Shipper reassigned"));
         }
 
+        orderService.recomputeAggregateStatus(orderId);
         return toResponse(delivery);
     }
 
@@ -111,8 +109,8 @@ public class ShippingServiceImpl implements ShippingService {
 
     @Override
     @Transactional
-    public DeliveryResponse confirmDeliveredManually(User admin, Long orderId) {
-        Delivery delivery = deliveryRepository.findByOrderId(orderId)
+    public DeliveryResponse confirmDeliveredManually(User admin, Long orderId, Long sellerId) {
+        Delivery delivery = deliveryRepository.findByOrderIdAndSellerId(orderId, sellerId)
                 .orElseThrow(() -> new DeliveryNotFoundException(orderId));
 
         if (!IN_PROGRESS_STATUSES.contains(delivery.getStatus())) {
@@ -123,6 +121,29 @@ public class ShippingServiceImpl implements ShippingService {
         applyDelivered(delivery, delivery.getStatus(), admin,
                 "Admin xac nhan giao thanh cong thu cong (doi soat ngoai he thong)");
         return toResponse(delivery);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, DeliveryStatus> getDeliveryStatusesBySeller(Long orderId) {
+        return deliveryRepository.findAllByOrderId(orderId).stream()
+                .collect(Collectors.toMap(Delivery::getSellerId, Delivery::getStatus));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isDeliveredForSeller(Long orderId, Long sellerId) {
+        return deliveryRepository.findByOrderIdAndSellerId(orderId, sellerId)
+                .map(d -> d.getStatus() == DeliveryStatus.DELIVERED)
+                .orElse(false);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public LocalDateTime getDeliveredAtForSeller(Long orderId, Long sellerId) {
+        return deliveryRepository.findByOrderIdAndSellerId(orderId, sellerId)
+                .map(Delivery::getDeliveredAt)
+                .orElse(null);
     }
 
     private void applyInTransit(Delivery delivery, DeliveryStatus previousStatus) {
@@ -139,7 +160,7 @@ public class ShippingServiceImpl implements ShippingService {
         deliveryRepository.save(delivery);
         deliveryStatusHistoryRepository.save(
                 new DeliveryStatusHistory(delivery, previousStatus, DeliveryStatus.DELIVERED, actor, note));
-        orderService.markDelivered(delivery.getOrderId(), delivery.getShipper());
+        orderService.recomputeAggregateStatus(delivery.getOrderId());
     }
 
     private void applyFailed(Delivery delivery, DeliveryStatus previousStatus, DeliveryStatusUpdateRequest request) {
@@ -159,10 +180,14 @@ public class ShippingServiceImpl implements ShippingService {
             // He qua tu dong cua business rule (retry), khong phai hanh dong truc tiep cua shipper -> changed_by = null.
             deliveryStatusHistoryRepository.save(new DeliveryStatusHistory(
                     delivery, DeliveryStatus.FAILED, DeliveryStatus.ASSIGNED, null, "Auto retry after failed delivery"));
-            orderService.markFailedDeliveryAndRetry(delivery.getOrderId(), delivery.getShipper());
+            // Rank khong doi (FAILED va ASSIGNED cung anh xa sang hang SHIPPED o cap order — muc 10.4),
+            // goi de nhat quan nhung se no-op.
+            orderService.recomputeAggregateStatus(delivery.getOrderId());
         } else {
             delivery.setStatus(DeliveryStatus.FAILED);
             deliveryRepository.save(delivery);
+            // TODO (design doc v2 muc 10.5, chua trien khai): huy toan bo order thay vi chi phan cua
+            // seller nay la interim gap cua giai doan 1 — se sua khi lam Cancel/Refund per-seller.
             orderService.markFailedDeliveryAndCancel(delivery.getOrderId(), delivery.getShipper());
         }
     }
@@ -171,6 +196,7 @@ public class ShippingServiceImpl implements ShippingService {
         return new DeliveryResponse(
                 delivery.getId(),
                 delivery.getOrderId(),
+                delivery.getSellerId(),
                 delivery.getShipper() != null ? delivery.getShipper().getId() : null,
                 delivery.getShipper() != null ? delivery.getShipper().getFullName() : null,
                 delivery.getStatus(),

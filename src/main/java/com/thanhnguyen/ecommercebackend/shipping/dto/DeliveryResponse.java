@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 public class DeliveryResponse {
     private Long id;
     private Long orderId;
+    private Long sellerId;
     private Long shipperId;
     private String shipperName;
     private DeliveryStatus status;

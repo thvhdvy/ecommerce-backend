@@ -10,5 +10,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class AssignShipperRequest {
     @NotNull
+    private Long sellerId;
+
+    @NotNull
     private Long shipperId;
 }

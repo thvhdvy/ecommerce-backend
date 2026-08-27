@@ -28,6 +28,8 @@ import com.thanhnguyen.ecommercebackend.order.repository.OrderItemRepository;
 import com.thanhnguyen.ecommercebackend.order.repository.OrderRepository;
 import com.thanhnguyen.ecommercebackend.order.repository.OrderStatusHistoryRepository;
 import com.thanhnguyen.ecommercebackend.payment.service.PaymentService;
+import com.thanhnguyen.ecommercebackend.shipping.entity.DeliveryStatus;
+import com.thanhnguyen.ecommercebackend.shipping.service.ShippingService;
 import com.thanhnguyen.ecommercebackend.user.entity.Seller;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import com.thanhnguyen.ecommercebackend.user.service.SellerService;
@@ -45,7 +47,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -73,9 +77,13 @@ public class OrderServiceImpl implements OrderService {
     private final OrderMaintenanceProcessor maintenanceProcessor;
     private final CouponService couponService;
     private final ApplicationEventPublisher eventPublisher;
+    private final ShippingService shippingService;
 
     // PaymentServiceImpl phụ thuộc ngược lại OrderService (confirmPayment/markPaymentFailed) —
     // @Lazy ở chiều Order->Payment (chỉ dùng khi cancel order đã CONFIRMED) để phá vòng lặp khởi tạo bean.
+    // Tương tự, ShippingServiceImpl phụ thuộc OrderService (areSellerItemsPacked/recomputeAggregateStatus)
+    // nên chiều ngược lại Order->Shipping (đọc delivery status để tính aggregate-min, mục 10.4) cũng
+    // phải @Lazy để phá vòng lặp khởi tạo bean.
     public OrderServiceImpl(
             OrderRepository orderRepository,
             OrderItemRepository orderItemRepository,
@@ -86,7 +94,8 @@ public class OrderServiceImpl implements OrderService {
             SellerService sellerService,
             OrderMaintenanceProcessor maintenanceProcessor,
             CouponService couponService,
-            ApplicationEventPublisher eventPublisher) {
+            ApplicationEventPublisher eventPublisher,
+            @Lazy ShippingService shippingService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
@@ -97,6 +106,7 @@ public class OrderServiceImpl implements OrderService {
         this.maintenanceProcessor = maintenanceProcessor;
         this.couponService = couponService;
         this.eventPublisher = eventPublisher;
+        this.shippingService = shippingService;
     }
 
     @Override
@@ -350,73 +360,93 @@ public class OrderServiceImpl implements OrderService {
         item.setItemStatus(OrderItemStatus.PACKED);
         orderItemRepository.save(item);
 
-        boolean allPacked = order.getItems().stream()
-                .allMatch(i -> i.getItemStatus() == OrderItemStatus.PACKED);
-        if (allPacked) {
-            order.setStatus(OrderStatus.PACKED);
-            orderRepository.save(order);
-            orderStatusHistoryRepository.save(new OrderStatusHistory(
-                    order, OrderStatus.CONFIRMED, OrderStatus.PACKED, currentUser, "All order items packed"));
-        }
+        recomputeAggregateStatus(order);
 
         return toItemResponse(item);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public boolean areSellerItemsPacked(Long orderId, Long sellerId) {
+        List<OrderItem> items = orderItemRepository.findAllByOrderIdAndSellerId(orderId, sellerId);
+        return !items.isEmpty() && items.stream().allMatch(i -> i.getItemStatus() == OrderItemStatus.PACKED);
+    }
+
+    // Thu hang (thap -> cao) dung de tinh aggregate-min orders.status qua cac seller (design doc v2
+    // muc 10.4). PENDING_PAYMENT/CANCELLED/COMPLETED... khong nam trong tap nay - xem AGGREGATE_TRACKED_STATUSES.
+    private static final Map<OrderStatus, Integer> STATUS_RANK = Map.of(
+            OrderStatus.CONFIRMED, 0, OrderStatus.PACKED, 1, OrderStatus.SHIPPED, 2, OrderStatus.DELIVERED, 3);
+    private static final Map<Integer, OrderStatus> RANK_STATUS = Map.of(
+            0, OrderStatus.CONFIRMED, 1, OrderStatus.PACKED, 2, OrderStatus.SHIPPED, 3, OrderStatus.DELIVERED);
+    private static final Set<OrderStatus> AGGREGATE_TRACKED_STATUSES = STATUS_RANK.keySet();
+
+    @Override
+    @Transactional
+    public void recomputeAggregateStatus(Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+        recomputeAggregateStatus(order);
+    }
+
+    private void recomputeAggregateStatus(Order order) {
+        if (!AGGREGATE_TRACKED_STATUSES.contains(order.getStatus())) {
+            return; // order da CANCELLED/COMPLETED/dang cho thanh toan... khong con theo doi aggregate nua
+        }
+
+        Map<Long, DeliveryStatus> deliveryStatuses = shippingService.getDeliveryStatusesBySeller(order.getId());
+        Set<Long> sellerIds = order.getItems().stream().map(OrderItem::getSellerId).collect(Collectors.toSet());
+
+        int minRank = sellerIds.stream()
+                .mapToInt(sellerId -> rankForSeller(order, sellerId, deliveryStatuses))
+                .min()
+                .orElse(0);
+        OrderStatus newStatus = RANK_STATUS.get(minRank);
+
+        if (newStatus == order.getStatus()) {
+            return;
+        }
+
+        OrderStatus previous = order.getStatus();
+        order.setStatus(newStatus);
+        orderRepository.save(order);
+        // He qua tong hop hanh dong cua nhieu seller/shipper doc lap, khong quy ve 1 actor cu the
+        // -> changed_by = null (design doc v2 muc 10.4).
+        orderStatusHistoryRepository.save(new OrderStatusHistory(
+                order, previous, newStatus, null, "Aggregate recompute across sellers"));
+
+        if (newStatus == OrderStatus.SHIPPED) {
+            eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_SHIPPED, order.getId()));
+        } else if (newStatus == OrderStatus.DELIVERED) {
+            eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_DELIVERED, order.getId()));
+        }
+    }
+
+    private int rankForSeller(Order order, Long sellerId, Map<Long, DeliveryStatus> deliveryStatuses) {
+        boolean allPacked = order.getItems().stream()
+                .filter(item -> item.getSellerId().equals(sellerId))
+                .allMatch(item -> item.getItemStatus() == OrderItemStatus.PACKED);
+        if (!allPacked) {
+            return STATUS_RANK.get(OrderStatus.CONFIRMED);
+        }
+
+        DeliveryStatus deliveryStatus = deliveryStatuses.get(sellerId);
+        if (deliveryStatus == null) {
+            return STATUS_RANK.get(OrderStatus.PACKED);
+        }
+        // FAILED (con luot retry) van tinh hang SHIPPED — seller do van "dang trong qua trinh giao",
+        // chi dang retry (design doc v2 muc 10.4).
+        return deliveryStatus == DeliveryStatus.DELIVERED
+                ? STATUS_RANK.get(OrderStatus.DELIVERED)
+                : STATUS_RANK.get(OrderStatus.SHIPPED);
+    }
+
     private static final int AUTO_COMPLETE_DAYS = 3;
 
-    @Override
-    @Transactional
-    public void markShipped(Long orderId, User actor) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new OrderNotFoundException(orderId));
-
-        if (order.getStatus() != OrderStatus.PACKED) {
-            return; // idempotent guard — vd gán lại shipper khi order đã SHIPPED
-        }
-
-        order.setStatus(OrderStatus.SHIPPED);
-        orderRepository.save(order);
-        orderStatusHistoryRepository.save(new OrderStatusHistory(
-                order, OrderStatus.PACKED, OrderStatus.SHIPPED, actor, "Shipper assigned"));
-        eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_SHIPPED, order.getId()));
-    }
-
-    @Override
-    @Transactional
-    public void markDelivered(Long orderId, User actor) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new OrderNotFoundException(orderId));
-
-        if (order.getStatus() != OrderStatus.SHIPPED) {
-            return; // idempotent guard
-        }
-
-        order.setStatus(OrderStatus.DELIVERED);
-        orderRepository.save(order);
-        orderStatusHistoryRepository.save(new OrderStatusHistory(
-                order, OrderStatus.SHIPPED, OrderStatus.DELIVERED, actor, "Delivery succeeded"));
-        eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_DELIVERED, order.getId()));
-    }
-
-    @Override
-    @Transactional
-    public void markFailedDeliveryAndRetry(Long orderId, User actor) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new OrderNotFoundException(orderId));
-
-        if (order.getStatus() != OrderStatus.SHIPPED) {
-            return; // idempotent guard
-        }
-
-        orderStatusHistoryRepository.save(new OrderStatusHistory(
-                order, OrderStatus.SHIPPED, OrderStatus.FAILED_DELIVERY, actor, "Delivery attempt failed"));
-        // Order status quay lai SHIPPED de retry (toi da 1 lan) — RETRY khong phai mot Order status rieng (xem design doc dong 116).
-        // Entry nay la he qua tu dong cua business rule (retry), khong phai hanh dong truc tiep cua actor -> changed_by = null.
-        orderStatusHistoryRepository.save(new OrderStatusHistory(
-                order, OrderStatus.FAILED_DELIVERY, OrderStatus.SHIPPED, null, "Auto retry after failed delivery"));
-        // order.status khong doi (van la SHIPPED) nen khong can save lai order.
-    }
-
+    // TODO (design doc v2 muc 10.5, chua trien khai): het luot retry hien van huy CA order thay vi
+    // chi phan cua seller do — interim gap cua giai doan 1 (Shipment-split), se sua khi lam
+    // Cancel/Refund per-seller (giai doan 2). Guard `order.getStatus() != SHIPPED` cung chi dung khi
+    // seller nay la seller "cham nhat" quyet dinh aggregate; neu seller khac trong cung order dang
+    // cham hon (order.status con la CONFIRMED/PACKED) thi guard nay se no-op sai — se sua cung luc.
     @Override
     @Transactional
     public void markFailedDeliveryAndCancel(Long orderId, User actor) {
@@ -456,16 +486,23 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
-    private static final Set<OrderStatus> REVIEW_ELIGIBLE_STATUSES = Set.of(OrderStatus.DELIVERED, OrderStatus.COMPLETED);
-
     @Override
     @Transactional(readOnly = true)
     public Long findEligibleOrderIdForReview(User customer, Long productId) {
-        return orderItemRepository
-                .findFirstByProductIdAndOrder_CustomerIdAndOrder_StatusInOrderByOrder_CreatedAtDesc(
-                        productId, customer.getId(), REVIEW_ELIGIBLE_STATUSES)
-                .map(item -> item.getOrder().getId())
-                .orElse(null);
+        // Khong con suy dien tu order.status IN (DELIVERED, COMPLETED) nhu v1 — voi shipment tach
+        // theo seller, mot item du dieu kien review ngay khi seller cua item do da DELIVERED, du cac
+        // seller khac trong cung order chua xong (design doc v2 muc 10.6).
+        List<OrderItem> candidates = orderItemRepository
+                .findAllByProductIdAndOrder_CustomerIdOrderByOrder_CreatedAtDesc(productId, customer.getId());
+
+        for (OrderItem item : candidates) {
+            Order order = item.getOrder();
+            if (order.getStatus() == OrderStatus.COMPLETED
+                    || shippingService.isDeliveredForSeller(order.getId(), item.getSellerId())) {
+                return order.getId();
+            }
+        }
+        return null;
     }
 
     @Override
@@ -483,15 +520,10 @@ public class OrderServiceImpl implements OrderService {
         }
         Order order = item.getOrder();
 
-        // Lay lan gan nhat order chuyen sang DELIVERED (khong dung updatedAt — co the bi ghi de boi
-        // transition khac sau do, cung ly do da ap dung cho Report - design doc muc 0.9/7.1).
-        LocalDateTime deliveredAt = orderStatusHistoryRepository
-                .findAllByOrder_IdOrderByCreatedAtDesc(order.getId())
-                .stream()
-                .filter(h -> h.getToStatus() == OrderStatus.DELIVERED)
-                .findFirst()
-                .map(OrderStatusHistory::getCreatedAt)
-                .orElse(null);
+        // Doc truc tiep tu delivery cua chinh seller nay (khong con suy dien tu order_status_history
+        // cap order — order.status aggregate-min co the con thap hon du seller nay da giao xong, neu
+        // seller khac trong cung order dang cham hon; design doc v2 muc 10.6).
+        LocalDateTime deliveredAt = shippingService.getDeliveredAtForSeller(order.getId(), item.getSellerId());
 
         return new OrderItemReturnInfo(
                 item.getId(), order.getId(), order.getCustomer().getId(), item.getSellerId(),

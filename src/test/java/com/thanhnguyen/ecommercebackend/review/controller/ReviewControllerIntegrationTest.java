@@ -95,14 +95,18 @@ class ReviewControllerIntegrationTest {
         return data.get("accessToken").asText();
     }
 
-    private String becomeSeller(String suffix) throws Exception {
+    /** Tao seller, tra ve [sellerToken, sellerId]. */
+    private Object[] becomeSeller(String suffix) throws Exception {
         String sellerToken = registerAndLogin("review-seller-" + suffix + "@example.com", UserRole.CUSTOMER);
-        mockMvc.perform(post("/api/sellers")
+        MvcResult result = mockMvc.perform(post("/api/sellers")
                         .header("Authorization", "Bearer " + sellerToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new BecomeSellerRequest("Shop-" + suffix, null))))
-                .andExpect(status().isCreated());
-        return sellerToken;
+                .andExpect(status().isCreated())
+                .andReturn();
+        Long sellerId = objectMapper.readTree(result.getResponse().getContentAsString())
+                .get("data").get("id").asLong();
+        return new Object[]{sellerToken, sellerId};
     }
 
     private Long createProductWithStock(String sellerToken, String suffix, BigDecimal price, int stock) throws Exception {
@@ -137,7 +141,7 @@ class ReviewControllerIntegrationTest {
     }
 
     /** Checkout -> intent -> IPN (ky that) -> CONFIRMED -> seller pack -> PACKED -> assign shipper -> SHIPPED -> DELIVERED. */
-    private Long buildDeliveredOrder(String customerToken, String sellerToken, Long productId, String suffix) throws Exception {
+    private Long buildDeliveredOrder(String customerToken, String sellerToken, Long sellerId, Long productId, String suffix) throws Exception {
         mockMvc.perform(post("/api/cart/items")
                         .header("Authorization", "Bearer " + customerToken)
                         .contentType(APPLICATION_JSON)
@@ -182,7 +186,7 @@ class ReviewControllerIntegrationTest {
         MvcResult assignResult = mockMvc.perform(patch("/api/admin/orders/" + orderId + "/assign-shipper")
                         .header("Authorization", "Bearer " + adminActionToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(shipper.getId()))))
+                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(sellerId, shipper.getId()))))
                 .andExpect(status().isOk())
                 .andReturn();
         Long deliveryId = objectMapper.readTree(assignResult.getResponse().getContentAsString())
@@ -241,10 +245,12 @@ class ReviewControllerIntegrationTest {
 
     @Test
     void create_shouldSucceed_andUpdateProductRating_whenOrderDelivered() throws Exception {
-        String sellerToken = becomeSeller("ok1");
+        Object[] sellerInfo = becomeSeller("ok1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "ok1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("review-customer-ok1@example.com", UserRole.CUSTOMER);
-        buildDeliveredOrder(customerToken, sellerToken, productId, "ok1");
+        buildDeliveredOrder(customerToken, sellerToken, sellerId, productId, "ok1");
 
         mockMvc.perform(post("/api/products/" + productId + "/reviews")
                         .header("Authorization", "Bearer " + customerToken)
@@ -261,7 +267,7 @@ class ReviewControllerIntegrationTest {
 
     @Test
     void create_shouldReturn403_whenNeverPurchased() throws Exception {
-        String sellerToken = becomeSeller("noeat1");
+        String sellerToken = (String) becomeSeller("noeat1")[0];
         Long productId = createProductWithStock(sellerToken, "noeat1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("review-customer-noeat1@example.com", UserRole.CUSTOMER);
 
@@ -275,7 +281,7 @@ class ReviewControllerIntegrationTest {
 
     @Test
     void create_shouldReturn403_whenOrderNotDeliveredYet() throws Exception {
-        String sellerToken = becomeSeller("pending1");
+        String sellerToken = (String) becomeSeller("pending1")[0];
         Long productId = createProductWithStock(sellerToken, "pending1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("review-customer-pending1@example.com", UserRole.CUSTOMER);
 
@@ -301,10 +307,12 @@ class ReviewControllerIntegrationTest {
 
     @Test
     void create_shouldReturn409_whenAlreadyReviewed() throws Exception {
-        String sellerToken = becomeSeller("dup1");
+        Object[] sellerInfo = becomeSeller("dup1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "dup1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("review-customer-dup1@example.com", UserRole.CUSTOMER);
-        buildDeliveredOrder(customerToken, sellerToken, productId, "dup1");
+        buildDeliveredOrder(customerToken, sellerToken, sellerId, productId, "dup1");
 
         mockMvc.perform(post("/api/products/" + productId + "/reviews")
                         .header("Authorization", "Bearer " + customerToken)
@@ -322,10 +330,12 @@ class ReviewControllerIntegrationTest {
 
     @Test
     void create_concurrentDuplicateSubmit_shouldReturn409_notInternalError() throws Exception {
-        String sellerToken = becomeSeller("race1");
+        Object[] sellerInfo = becomeSeller("race1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "race1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("review-customer-race1@example.com", UserRole.CUSTOMER);
-        buildDeliveredOrder(customerToken, sellerToken, productId, "race1");
+        buildDeliveredOrder(customerToken, sellerToken, sellerId, productId, "race1");
 
         // Mo phong TOCTOU: 2 request cung luc deu qua duoc existsBy... check truoc khi ben kia commit.
         // saveAndFlush + catch DataIntegrityViolationException phai bien request thua thanh 409, khong phai 500.
@@ -354,10 +364,12 @@ class ReviewControllerIntegrationTest {
 
     @Test
     void create_shouldReturn400_whenRatingOutOfRange() throws Exception {
-        String sellerToken = becomeSeller("badrating1");
+        Object[] sellerInfo = becomeSeller("badrating1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "badrating1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("review-customer-badrating1@example.com", UserRole.CUSTOMER);
-        buildDeliveredOrder(customerToken, sellerToken, productId, "badrating1");
+        buildDeliveredOrder(customerToken, sellerToken, sellerId, productId, "badrating1");
 
         mockMvc.perform(post("/api/products/" + productId + "/reviews")
                         .header("Authorization", "Bearer " + customerToken)
@@ -369,10 +381,12 @@ class ReviewControllerIntegrationTest {
 
     @Test
     void listByProduct_shouldExcludeHiddenReviews() throws Exception {
-        String sellerToken = becomeSeller("hide1");
+        Object[] sellerInfo = becomeSeller("hide1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "hide1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("review-customer-hide1@example.com", UserRole.CUSTOMER);
-        buildDeliveredOrder(customerToken, sellerToken, productId, "hide1");
+        buildDeliveredOrder(customerToken, sellerToken, sellerId, productId, "hide1");
 
         MvcResult createResult = mockMvc.perform(post("/api/products/" + productId + "/reviews")
                         .header("Authorization", "Bearer " + customerToken)
@@ -412,10 +426,12 @@ class ReviewControllerIntegrationTest {
 
     @Test
     void adminUnhide_shouldRestoreVisibility_andRecalculateRating() throws Exception {
-        String sellerToken = becomeSeller("unhide1");
+        Object[] sellerInfo = becomeSeller("unhide1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "unhide1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("review-customer-unhide1@example.com", UserRole.CUSTOMER);
-        buildDeliveredOrder(customerToken, sellerToken, productId, "unhide1");
+        buildDeliveredOrder(customerToken, sellerToken, sellerId, productId, "unhide1");
 
         MvcResult createResult = mockMvc.perform(post("/api/products/" + productId + "/reviews")
                         .header("Authorization", "Bearer " + customerToken)
@@ -447,10 +463,12 @@ class ReviewControllerIntegrationTest {
 
     @Test
     void adminUnhide_shouldReturn403_forNonAdmin() throws Exception {
-        String sellerToken = becomeSeller("unhideperm1");
+        Object[] sellerInfo = becomeSeller("unhideperm1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "unhideperm1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("review-customer-unhideperm1@example.com", UserRole.CUSTOMER);
-        buildDeliveredOrder(customerToken, sellerToken, productId, "unhideperm1");
+        buildDeliveredOrder(customerToken, sellerToken, sellerId, productId, "unhideperm1");
 
         MvcResult createResult = mockMvc.perform(post("/api/products/" + productId + "/reviews")
                         .header("Authorization", "Bearer " + customerToken)
@@ -468,10 +486,12 @@ class ReviewControllerIntegrationTest {
 
     @Test
     void adminHide_shouldReturn403_forNonAdmin() throws Exception {
-        String sellerToken = becomeSeller("perm1");
+        Object[] sellerInfo = becomeSeller("perm1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "perm1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("review-customer-perm1@example.com", UserRole.CUSTOMER);
-        buildDeliveredOrder(customerToken, sellerToken, productId, "perm1");
+        buildDeliveredOrder(customerToken, sellerToken, sellerId, productId, "perm1");
 
         MvcResult createResult = mockMvc.perform(post("/api/products/" + productId + "/reviews")
                         .header("Authorization", "Bearer " + customerToken)

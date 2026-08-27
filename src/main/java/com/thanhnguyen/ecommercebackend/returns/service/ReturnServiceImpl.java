@@ -3,7 +3,6 @@ package com.thanhnguyen.ecommercebackend.returns.service;
 import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.inventory.service.InventoryService;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemReturnInfo;
-import com.thanhnguyen.ecommercebackend.order.entity.OrderStatus;
 import com.thanhnguyen.ecommercebackend.order.exception.OrderItemNotFoundException;
 import com.thanhnguyen.ecommercebackend.order.exception.OrderOwnershipException;
 import com.thanhnguyen.ecommercebackend.order.service.OrderService;
@@ -261,13 +260,12 @@ public class ReturnServiceImpl implements ReturnService {
     }
 
     private void validateEligibility(OrderItemReturnInfo info) {
-        if (info.getOrderStatus() != OrderStatus.DELIVERED && info.getOrderStatus() != OrderStatus.COMPLETED) {
-            throw new ReturnNotEligibleException(
-                    "Order must be DELIVERED or COMPLETED to request a return, current status: "
-                            + info.getOrderStatus());
+        // deliveredAt doc truc tiep tu delivery cua seller tuong ung (design doc v2 muc 10.6) — null
+        // nghia la seller do chua giao xong, khong con can check them order.status rieng nhu v1.
+        if (info.getDeliveredAt() == null) {
+            throw new ReturnNotEligibleException("Item's seller has not delivered this order yet");
         }
-        if (info.getDeliveredAt() == null
-                || info.getDeliveredAt().plusDays(RETURN_WINDOW_DAYS).isBefore(LocalDateTime.now())) {
+        if (info.getDeliveredAt().plusDays(RETURN_WINDOW_DAYS).isBefore(LocalDateTime.now())) {
             throw new ReturnNotEligibleException("Return window has expired");
         }
     }

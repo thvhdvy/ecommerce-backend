@@ -99,14 +99,18 @@ class ShippingControllerIntegrationTest {
         return data.get("accessToken").asText();
     }
 
-    private String becomeSeller(String suffix) throws Exception {
+    /** Tao seller, tra ve [sellerToken, sellerId]. */
+    private Object[] becomeSeller(String suffix) throws Exception {
         String sellerToken = registerAndLogin("shipping-seller-" + suffix + "@example.com", UserRole.CUSTOMER);
-        mockMvc.perform(post("/api/sellers")
+        MvcResult result = mockMvc.perform(post("/api/sellers")
                         .header("Authorization", "Bearer " + sellerToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new BecomeSellerRequest("Shop-" + suffix, null))))
-                .andExpect(status().isCreated());
-        return sellerToken;
+                .andExpect(status().isCreated())
+                .andReturn();
+        Long sellerId = objectMapper.readTree(result.getResponse().getContentAsString())
+                .get("data").get("id").asLong();
+        return new Object[]{sellerToken, sellerId};
     }
 
     private Long createProductWithStock(String sellerToken, String suffix, BigDecimal price, int stock) throws Exception {
@@ -184,11 +188,11 @@ class ShippingControllerIntegrationTest {
         return orderId;
     }
 
-    private String assignShipper(String adminToken, Long orderId, Long shipperId) throws Exception {
+    private String assignShipper(String adminToken, Long orderId, Long sellerId, Long shipperId) throws Exception {
         MvcResult result = mockMvc.perform(patch("/api/admin/orders/" + orderId + "/assign-shipper")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(shipperId))))
+                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(sellerId, shipperId))))
                 .andExpect(status().isOk())
                 .andReturn();
         return objectMapper.readTree(result.getResponse().getContentAsString())
@@ -239,7 +243,9 @@ class ShippingControllerIntegrationTest {
 
     @Test
     void assignShipper_shouldMoveOrderToShipped_whenOrderPacked() throws Exception {
-        String sellerToken = becomeSeller("assign1");
+        Object[] sellerInfo = becomeSeller("assign1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "assign1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-assign1@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
@@ -251,7 +257,7 @@ class ShippingControllerIntegrationTest {
         mockMvc.perform(patch("/api/admin/orders/" + orderId + "/assign-shipper")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(shipper.getId()))))
+                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(sellerId, shipper.getId()))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("ASSIGNED")))
                 .andExpect(jsonPath("$.data.shipperId", is(shipper.getId().intValue())));
@@ -270,7 +276,9 @@ class ShippingControllerIntegrationTest {
 
     @Test
     void assignShipper_shouldReturn409_whenOrderNotPackedYet() throws Exception {
-        String sellerToken = becomeSeller("notpacked1");
+        Object[] sellerInfo = becomeSeller("notpacked1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "notpacked1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-notpacked1@example.com", UserRole.CUSTOMER);
 
@@ -296,7 +304,7 @@ class ShippingControllerIntegrationTest {
         mockMvc.perform(patch("/api/admin/orders/" + orderId + "/assign-shipper")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(shipper.getId()))))
+                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(sellerId, shipper.getId()))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code", is("DELIVERY_NOT_ALLOWED")));
 
@@ -308,7 +316,9 @@ class ShippingControllerIntegrationTest {
 
     @Test
     void updateStatus_delivered_shouldMoveOrderToDelivered() throws Exception {
-        String sellerToken = becomeSeller("deliver1");
+        Object[] sellerInfo = becomeSeller("deliver1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "deliver1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-deliver1@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
@@ -316,7 +326,7 @@ class ShippingControllerIntegrationTest {
         String shipperToken = registerAndLogin("shipping-shipper-deliver1@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("shipping-shipper-deliver1@example.com").orElseThrow();
         String adminToken = registerAndLogin("shipping-admin-deliver-action1@example.com", UserRole.ADMIN);
-        String deliveryId = assignShipper(adminToken, orderId, shipper.getId());
+        String deliveryId = assignShipper(adminToken, orderId, sellerId, shipper.getId());
 
         mockMvc.perform(patch("/api/shipper/deliveries/" + deliveryId + "/status")
                         .header("Authorization", "Bearer " + shipperToken)
@@ -333,7 +343,9 @@ class ShippingControllerIntegrationTest {
 
     @Test
     void updateStatus_failedFirstTime_shouldAutoRetry_andKeepOrderShipped() throws Exception {
-        String sellerToken = becomeSeller("retry1");
+        Object[] sellerInfo = becomeSeller("retry1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "retry1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-retry1@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
@@ -341,7 +353,7 @@ class ShippingControllerIntegrationTest {
         String shipperToken = registerAndLogin("shipping-shipper-retry1@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("shipping-shipper-retry1@example.com").orElseThrow();
         String adminToken = registerAndLogin("shipping-admin-retry-action1@example.com", UserRole.ADMIN);
-        String deliveryId = assignShipper(adminToken, orderId, shipper.getId());
+        String deliveryId = assignShipper(adminToken, orderId, sellerId, shipper.getId());
 
         mockMvc.perform(patch("/api/shipper/deliveries/" + deliveryId + "/status")
                         .header("Authorization", "Bearer " + shipperToken)
@@ -378,7 +390,9 @@ class ShippingControllerIntegrationTest {
                 .when(vnpayClient)
                 .requestRefund(anyString(), any(), any(LocalDateTime.class), any(BigDecimal.class), anyString(), anyString());
 
-        String sellerToken = becomeSeller("cancel1");
+        Object[] sellerInfo = becomeSeller("cancel1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "cancel1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-cancel1@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
@@ -386,7 +400,7 @@ class ShippingControllerIntegrationTest {
         String shipperToken = registerAndLogin("shipping-shipper-cancel1@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("shipping-shipper-cancel1@example.com").orElseThrow();
         String adminToken = registerAndLogin("shipping-admin-cancel-action1@example.com", UserRole.ADMIN);
-        String deliveryId = assignShipper(adminToken, orderId, shipper.getId());
+        String deliveryId = assignShipper(adminToken, orderId, sellerId, shipper.getId());
 
         // That bai lan 1 -> auto retry
         mockMvc.perform(patch("/api/shipper/deliveries/" + deliveryId + "/status")
@@ -413,7 +427,9 @@ class ShippingControllerIntegrationTest {
 
     @Test
     void updateStatus_shouldReturn403_whenNotOwningShipper() throws Exception {
-        String sellerToken = becomeSeller("owner1");
+        Object[] sellerInfo = becomeSeller("owner1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "owner1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-owner1@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
@@ -422,7 +438,7 @@ class ShippingControllerIntegrationTest {
         User shipper = userRepository.findByEmail("shipping-shipper-owner1@example.com").orElseThrow();
         String otherShipperToken = registerAndLogin("shipping-shipper-owner1other@example.com", UserRole.SHIPPER);
         String adminToken = registerAndLogin("shipping-admin-owner-action1@example.com", UserRole.ADMIN);
-        String deliveryId = assignShipper(adminToken, orderId, shipper.getId());
+        String deliveryId = assignShipper(adminToken, orderId, sellerId, shipper.getId());
 
         mockMvc.perform(patch("/api/shipper/deliveries/" + deliveryId + "/status")
                         .header("Authorization", "Bearer " + otherShipperToken)
@@ -434,7 +450,9 @@ class ShippingControllerIntegrationTest {
 
     @Test
     void assignShipper_shouldReassignToNewShipper_whenOrderAlreadyShipped() throws Exception {
-        String sellerToken = becomeSeller("reassign1");
+        Object[] sellerInfo = becomeSeller("reassign1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "reassign1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-reassign1@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
@@ -446,7 +464,7 @@ class ShippingControllerIntegrationTest {
         String adminToken = registerAndLogin("shipping-admin-reassign-action1@example.com", UserRole.ADMIN);
 
         // Gan shipper lan dau -> order chuyen SHIPPED
-        assignShipper(adminToken, orderId, oldShipper.getId());
+        assignShipper(adminToken, orderId, sellerId, oldShipper.getId());
         mockMvc.perform(get("/api/orders/" + orderId)
                         .header("Authorization", "Bearer " + customerToken))
                 .andExpect(status().isOk())
@@ -456,7 +474,7 @@ class ShippingControllerIntegrationTest {
         mockMvc.perform(patch("/api/admin/orders/" + orderId + "/assign-shipper")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(newShipper.getId()))))
+                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(sellerId, newShipper.getId()))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("ASSIGNED")))
                 .andExpect(jsonPath("$.data.shipperId", is(newShipper.getId().intValue())));
@@ -482,7 +500,9 @@ class ShippingControllerIntegrationTest {
 
     @Test
     void confirmDelivery_shouldMoveOrderToDelivered_whenAdminConfirmsManually() throws Exception {
-        String sellerToken = becomeSeller("confirm1");
+        Object[] sellerInfo = becomeSeller("confirm1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "confirm1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-confirm1@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
@@ -490,11 +510,11 @@ class ShippingControllerIntegrationTest {
         String shipperToken = registerAndLogin("shipping-shipper-confirm1@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("shipping-shipper-confirm1@example.com").orElseThrow();
         String adminToken = registerAndLogin("shipping-admin-confirm-action1@example.com", UserRole.ADMIN);
-        assignShipper(adminToken, orderId, shipper.getId());
+        assignShipper(adminToken, orderId, sellerId, shipper.getId());
 
         // Shipper da giao thanh cong nhung app crash, khong gui duoc status update len he thong.
         // Admin doi soat qua bao cao ngoai he thong roi xac nhan thu cong.
-        mockMvc.perform(patch("/api/admin/orders/" + orderId + "/confirm-delivery")
+        mockMvc.perform(patch("/api/admin/orders/" + orderId + "/confirm-delivery?sellerId=" + sellerId)
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status", is("DELIVERED")));
@@ -512,7 +532,9 @@ class ShippingControllerIntegrationTest {
 
     @Test
     void confirmDelivery_shouldReturn409_whenDeliveryAlreadyDelivered() throws Exception {
-        String sellerToken = becomeSeller("confirm2");
+        Object[] sellerInfo = becomeSeller("confirm2");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "confirm2", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-confirm2@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
@@ -520,7 +542,7 @@ class ShippingControllerIntegrationTest {
         String shipperToken = registerAndLogin("shipping-shipper-confirm2@example.com", UserRole.SHIPPER);
         User shipper = userRepository.findByEmail("shipping-shipper-confirm2@example.com").orElseThrow();
         String adminToken = registerAndLogin("shipping-admin-confirm-action2@example.com", UserRole.ADMIN);
-        String deliveryId = assignShipper(adminToken, orderId, shipper.getId());
+        String deliveryId = assignShipper(adminToken, orderId, sellerId, shipper.getId());
 
         mockMvc.perform(patch("/api/shipper/deliveries/" + deliveryId + "/status")
                         .header("Authorization", "Bearer " + shipperToken)
@@ -528,7 +550,7 @@ class ShippingControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(new DeliveryStatusUpdateRequest(DeliveryStatus.DELIVERED, null))))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(patch("/api/admin/orders/" + orderId + "/confirm-delivery")
+        mockMvc.perform(patch("/api/admin/orders/" + orderId + "/confirm-delivery?sellerId=" + sellerId)
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code", is("DELIVERY_NOT_ALLOWED")));
@@ -536,19 +558,23 @@ class ShippingControllerIntegrationTest {
 
     @Test
     void confirmDelivery_shouldReturn403_forNonAdmin() throws Exception {
-        String sellerToken = becomeSeller("confirm3");
+        Object[] sellerInfo = becomeSeller("confirm3");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "confirm3", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-confirm3@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
 
-        mockMvc.perform(patch("/api/admin/orders/" + orderId + "/confirm-delivery")
+        mockMvc.perform(patch("/api/admin/orders/" + orderId + "/confirm-delivery?sellerId=" + sellerId)
                         .header("Authorization", "Bearer " + customerToken))
                 .andExpect(status().isForbidden());
     }
 
     @Test
     void assignShipper_shouldReturn409_whenTargetUserNotShipper() throws Exception {
-        String sellerToken = becomeSeller("notshipper1");
+        Object[] sellerInfo = becomeSeller("notshipper1");
+        String sellerToken = (String) sellerInfo[0];
+        Long sellerId = (Long) sellerInfo[1];
         Long productId = createProductWithStock(sellerToken, "notshipper1", new BigDecimal("10.00"), 5);
         String customerToken = registerAndLogin("shipping-customer-notshipper1@example.com", UserRole.CUSTOMER);
         Long orderId = buildPackedOrder(customerToken, sellerToken, productId, 1, "1000");
@@ -559,7 +585,7 @@ class ShippingControllerIntegrationTest {
         mockMvc.perform(patch("/api/admin/orders/" + orderId + "/assign-shipper")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(plainCustomer.getId()))))
+                        .content(objectMapper.writeValueAsString(new AssignShipperRequest(sellerId, plainCustomer.getId()))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code", is("NOT_A_SHIPPER")));
     }

@@ -44,26 +44,22 @@ public interface OrderService {
     /** Seller xem các order chứa item của mình — mỗi order chỉ trả về item thuộc seller đó. */
     PageResponse<OrderResponse> listSellerOrders(User currentUser, Pageable pageable);
 
-    /** Seller đóng gói 1 order item; nếu 100% item của order đã PACKED thì order tự chuyển CONFIRMED → PACKED. */
+    /**
+     * Seller đóng gói 1 order item; nếu 100% item của seller đó trong order đã PACKED thì tính lại
+     * aggregate-min qua recomputeAggregateStatus (design doc v2 mục 10.4).
+     */
     OrderItemResponse packOrderItem(User currentUser, Long orderItemId);
 
-    /**
-     * Admin gán shipper lần đầu cho order đã PACKED → chuyển PACKED → SHIPPED. Idempotent nếu đã SHIPPED (trường hợp gán lại shipper).
-     * @param actor admin thực hiện hành động gán shipper — ghi vào order_status_history.changed_by để audit.
-     */
-    void markShipped(Long orderId, User actor);
+    /** Dùng bởi Shipping module để gate assignShipper theo từng seller (mục 10.4). */
+    boolean areSellerItemsPacked(Long orderId, Long sellerId);
 
     /**
-     * Shipper báo giao hàng thành công → SHIPPED → DELIVERED.
-     * @param actor shipper thực hiện hành động — ghi vào order_status_history.changed_by để audit.
+     * Tính lại orders.status theo aggregate-min qua các seller (design doc v2 mục 10.4) — gọi sau
+     * khi 1 seller pack xong toàn bộ item hoặc delivery của seller đó đổi trạng thái. Idempotent —
+     * không đổi gì nếu rank tổng hợp không tăng. Không tác động nếu order đã ở trạng thái ngoài
+     * vòng fulfillment (VD CANCELLED/COMPLETED).
      */
-    void markDelivered(Long orderId, User actor);
-
-    /**
-     * Giao thất bại lần 1 (còn quyền retry) → ghi nhận SHIPPED → FAILED_DELIVERY → SHIPPED (tự động retry, không đổi shipper).
-     * @param actor shipper báo cáo giao thất bại — ghi vào entry SHIPPED → FAILED_DELIVERY; entry retry tự động (FAILED_DELIVERY → SHIPPED) vẫn để null vì đó là quyết định hệ thống, không phải hành động của actor.
-     */
-    void markFailedDeliveryAndRetry(Long orderId, User actor);
+    void recomputeAggregateStatus(Long orderId);
 
     /**
      * Giao thất bại lần 2 (hết quyền retry) → SHIPPED → FAILED_DELIVERY → CANCELLED, tự động trigger refund.
