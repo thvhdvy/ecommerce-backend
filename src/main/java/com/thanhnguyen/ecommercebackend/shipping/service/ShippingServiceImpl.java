@@ -186,9 +186,7 @@ public class ShippingServiceImpl implements ShippingService {
         } else {
             delivery.setStatus(DeliveryStatus.FAILED);
             deliveryRepository.save(delivery);
-            // TODO (design doc v2 muc 10.5, chua trien khai): huy toan bo order thay vi chi phan cua
-            // seller nay la interim gap cua giai doan 1 — se sua khi lam Cancel/Refund per-seller.
-            orderService.markFailedDeliveryAndCancel(delivery.getOrderId(), delivery.getShipper());
+            orderService.markFailedDeliveryAndCancel(delivery.getOrderId(), delivery.getSellerId());
         }
     }
 

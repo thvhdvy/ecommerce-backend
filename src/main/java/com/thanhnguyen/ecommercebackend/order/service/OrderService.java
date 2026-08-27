@@ -77,10 +77,12 @@ public interface OrderService {
     void recomputeAggregateStatus(Long orderId);
 
     /**
-     * Giao thất bại lần 2 (hết quyền retry) → SHIPPED → FAILED_DELIVERY → CANCELLED, tự động trigger refund.
-     * @param actor shipper báo cáo giao thất bại lần 2 — ghi vào entry SHIPPED → FAILED_DELIVERY; entry auto-cancel (FAILED_DELIVERY → CANCELLED) vẫn để null vì đó là quyết định hệ thống.
+     * Giao thất bại lần 2 (hết quyền retry) → hủy phần hàng của seller đó (item_status = CANCELLED),
+     * tự động trigger refund một phần — design doc v2 mục 10.5. Không nhận actor: đây là hệ quả tự
+     * động của business rule (hết quyền retry), không phải hành động trực tiếp của actor nào; lịch sử
+     * thất bại giao hàng thật đã ghi ở delivery_status_history bởi ShippingService.
      */
-    void markFailedDeliveryAndCancel(Long orderId, User actor);
+    void markFailedDeliveryAndCancel(Long orderId, Long sellerId);
 
     /** Scheduled job: tự động hoàn tất order đã DELIVERED quá 3 ngày → COMPLETED. */
     void autoCompleteDeliveredOrders();

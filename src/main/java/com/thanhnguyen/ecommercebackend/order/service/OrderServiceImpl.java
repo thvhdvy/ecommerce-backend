@@ -286,22 +286,6 @@ public class OrderServiceImpl implements OrderService {
         return grossAmount.multiply(discountRatio).setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
-    // VNPay refund goi mang ra ngoai — khong duoc chay ben trong transaction dang giu row lock cua
-    // order (UPDATE status + optimistic lock vua chay o tren). Chi trigger sau khi transaction hien
-    // tai commit xong, de connection/lock duoc giai phong truoc khi cho VNPay tra ve.
-    private void refundAfterCommit(Long orderId, String refundReason) {
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    paymentService.refund(orderId, refundReason, "127.0.0.1");
-                }
-            });
-        } else {
-            paymentService.refund(orderId, refundReason, "127.0.0.1");
-        }
-    }
-
     // returnRequestId=null: refund khong xuat phat tu 1 ReturnRequest (cot refunds.return_request_id
     // von da nullable — design doc v2 muc 10.5.1). Refund that bai di qua hang doi admin retry san
     // co (listFailedRefunds/resolveRefundManually), khong can co che retry rieng.
@@ -530,32 +514,43 @@ public class OrderServiceImpl implements OrderService {
 
     private static final int AUTO_COMPLETE_DAYS = 3;
 
-    // TODO (design doc v2 muc 10.5, chua trien khai): het luot retry hien van huy CA order thay vi
-    // chi phan cua seller do — interim gap cua giai doan 1 (Shipment-split), se sua khi lam
-    // Cancel/Refund per-seller (giai doan 2). Guard `order.getStatus() != SHIPPED` cung chi dung khi
-    // seller nay la seller "cham nhat" quyet dinh aggregate; neu seller khac trong cung order dang
-    // cham hon (order.status con la CONFIRMED/PACKED) thi guard nay se no-op sai — se sua cung luc.
     @Override
     @Transactional
-    public void markFailedDeliveryAndCancel(Long orderId, User actor) {
+    public void markFailedDeliveryAndCancel(Long orderId, Long sellerId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException(orderId));
 
-        if (order.getStatus() != OrderStatus.SHIPPED) {
+        List<OrderItem> sellerItems = order.getItems().stream()
+                .filter(item -> item.getSellerId().equals(sellerId))
+                .toList();
+        if (sellerItems.isEmpty() || sellerItems.stream().anyMatch(i -> i.getItemStatus() == OrderItemStatus.CANCELLED)) {
             return; // idempotent guard
         }
 
-        orderStatusHistoryRepository.save(new OrderStatusHistory(
-                order, OrderStatus.SHIPPED, OrderStatus.FAILED_DELIVERY, actor, "Delivery attempt failed (2nd time)"));
+        BigDecimal refundAmount = proratedRefundAmount(sellerItems, order);
 
-        order.setStatus(OrderStatus.CANCELLED);
-        orderRepository.save(order);
-        // Auto-cancel la he qua tu dong cua business rule (het quyen retry), khong phai hanh dong truc tiep cua actor -> changed_by = null.
-        orderStatusHistoryRepository.save(new OrderStatusHistory(
-                order, OrderStatus.FAILED_DELIVERY, OrderStatus.CANCELLED, null, "Auto-cancel after retry exhausted"));
-        eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_CANCELLED, order.getId()));
+        for (OrderItem item : sellerItems) {
+            item.setItemStatus(OrderItemStatus.CANCELLED);
+        }
+        orderItemRepository.saveAll(sellerItems);
 
-        refundAfterCommit(orderId, "Auto-cancel after 2nd failed delivery attempt");
+        boolean allSellersCancelled = order.getItems().stream()
+                .allMatch(item -> item.getItemStatus() == OrderItemStatus.CANCELLED);
+        if (allSellersCancelled) {
+            OrderStatus previous = order.getStatus();
+            order.setStatus(OrderStatus.CANCELLED);
+            orderRepository.save(order);
+            // He qua tu dong cua business rule (het quyen retry), khong phai hanh dong truc tiep cua actor -> changed_by = null.
+            orderStatusHistoryRepository.save(new OrderStatusHistory(
+                    order, previous, OrderStatus.CANCELLED, null, "All sellers cancelled (delivery retry exhausted)"));
+            eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_CANCELLED, order.getId()));
+        } else {
+            recomputeAggregateStatus(order);
+        }
+
+        if (refundAmount.compareTo(BigDecimal.ZERO) > 0) {
+            refundPartialAfterCommit(order.getId(), refundAmount, "Seller #" + sellerId + " delivery retry exhausted");
+        }
     }
 
     // Cung mo hinh voi expirePendingPayments: khong @Transactional, moi order 1 transaction rieng.
@@ -636,9 +631,9 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * saveAndFlush (khong phai save thuong) de bat ObjectOptimisticLockingFailureException ngay tai day,
-     * truoc khi tiep tuc goi paymentService.refund() — phong 2 request cancel/forceCancel dong thoi tren
-     * cung 1 order cung doc duoc status hop le truoc khi ben kia commit, dan toi refund 2 lan (xem Order.version).
+     * saveAndFlush (khong phai save thuong) de bat ObjectOptimisticLockingFailureException ngay tai day
+     * — phong 2 request cancel/forceCancel dong thoi tren cung 1 order (PENDING_PAYMENT) cung doc duoc
+     * status hop le truoc khi ben kia commit, dan toi releaseStock goi 2 lan cho cung 1 order (xem Order.version).
      */
     private Order saveWithOptimisticLock(Order order) {
         try {
