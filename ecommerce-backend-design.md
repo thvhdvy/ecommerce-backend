@@ -525,9 +525,9 @@ Phase 7 quan trọng không kém các phase trước — đây là phần giúp 
 - Notification service (email khi order đổi trạng thái) — **đã thiết kế chi tiết ở mục 8**.
 - Seller payout / tính hoa hồng — **đã thiết kế chi tiết ở mục 9**.
 - Tách shipment theo từng seller trong 1 order (thay vì 1 shipment/order) — **phác thảo sơ bộ ở mục 10, thiết kế chi tiết dời tới sát lúc code** (thay đổi cấu trúc lớn nhất, rủi ro cao nhất, nên làm sau cùng).
-- Multi-currency — **phác thảo sơ bộ ở mục 11**, giá trị thấp cho project cá nhân, cân nhắc bỏ qua (xem mục 11).
+- ~~Multi-currency~~ — **đã quyết định bỏ khỏi roadmap** (xem mục 11): giá trị nghiệp vụ/phỏng vấn thấp so với công sức cho project cá nhân, ưu tiên đào sâu 4 module v2 đã triển khai (Coupon, Return, Notification, Payout) thay vì dàn trải thêm module mới.
 
-Thứ tự triển khai đề xuất: 7 (Return/Exchange) → 8 (Notification) → 9 (Seller payout) → 10 (Shipment split) → 11 (Multi-currency, tùy chọn) — ưu tiên theo độ độc lập với module khác và mức độ tái dùng pattern đã có, tương tự lý do đã chọn Coupon làm trước ở mục 6.
+Thứ tự triển khai đề xuất: 7 (Return/Exchange) → 8 (Notification) → 9 (Seller payout) → 10 (Shipment split) — ưu tiên theo độ độc lập với module khác và mức độ tái dùng pattern đã có, tương tự lý do đã chọn Coupon làm trước ở mục 6.
 
 ## 6. v2 — Module Coupon/Promotion (Phase 8)
 
@@ -1184,7 +1184,11 @@ Nhiều khả năng cần 1 bảng trung gian `shipments` (thay thế vai trò h
 (`PENDING/PACKED/SHIPPED/DELIVERED` ở cấp item thay vì chỉ `PENDING/PACKED`). Đây **không phải**
 quyết định chốt — chỉ ghi lại hướng nghĩ để không bắt đầu lại từ số 0 khi tới lúc thiết kế thật.
 
-## 11. v2 — Multi-currency (phác thảo sơ bộ, cân nhắc bỏ qua)
+## 11. v2 — Multi-currency (đã quyết định bỏ khỏi roadmap)
+
+> **Quyết định (2026-08-27):** Bỏ hẳn mục này khỏi roadmap. Lý do: xem 11.1. Giữ lại nội dung bên
+> dưới chỉ để tham khảo nếu sau này nhu cầu nghiệp vụ thay đổi (VD có khách hàng đa quốc gia thật),
+> không phải việc cần làm trong phạm vi project hiện tại.
 
 ### 11.1 Đánh giá giá trị trước khi đầu tư thiết kế
 
