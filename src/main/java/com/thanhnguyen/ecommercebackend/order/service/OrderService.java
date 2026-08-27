@@ -2,11 +2,14 @@ package com.thanhnguyen.ecommercebackend.order.service;
 
 import com.thanhnguyen.ecommercebackend.common.PageResponse;
 import com.thanhnguyen.ecommercebackend.order.dto.CheckoutRequest;
+import com.thanhnguyen.ecommercebackend.order.dto.OrderItemPayoutInfo;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemResponse;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemReturnInfo;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderResponse;
 import com.thanhnguyen.ecommercebackend.user.entity.User;
 import org.springframework.data.domain.Pageable;
+
+import java.util.List;
 
 public interface OrderService {
     OrderResponse checkout(User currentUser, CheckoutRequest request);
@@ -93,4 +96,12 @@ public interface OrderService {
      * order không tồn tại (phòng thủ — không nên xảy ra vì event chỉ publish sau khi order đã lưu).
      */
     Long getCustomerIdByOrderId(Long orderId);
+
+    /**
+     * Dùng bởi Payout module: đọc breakdown order_item (sellerId, unitPriceSnapshot, quantity) của
+     * 1 order để tính EARNED ledger entry theo từng seller khi order → COMPLETED (design doc v2 mục
+     * 9.3). Trả về danh sách rỗng nếu order không tồn tại (phòng thủ — không nên xảy ra vì chỉ gọi
+     * ngay trong transaction chuyển COMPLETED).
+     */
+    List<OrderItemPayoutInfo> getOrderItemsForPayout(Long orderId);
 }

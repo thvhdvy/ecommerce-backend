@@ -27,6 +27,7 @@ import com.thanhnguyen.ecommercebackend.user.exception.NotASellerException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductOwnershipException;
 import com.thanhnguyen.ecommercebackend.notification.exception.NotificationNotFoundException;
+import com.thanhnguyen.ecommercebackend.payout.exception.PayoutNotAllowedException;
 import com.thanhnguyen.ecommercebackend.returns.exception.ReturnAlreadyActiveException;
 import com.thanhnguyen.ecommercebackend.returns.exception.ReturnNotEligibleException;
 import com.thanhnguyen.ecommercebackend.returns.exception.ReturnNotFoundException;
@@ -387,6 +388,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleReturnStatusNotAllowed(ReturnStatusNotAllowedException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("RETURN_STATUS_NOT_ALLOWED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(PayoutNotAllowedException.class)
+    public ResponseEntity<ApiResponse<Void>> handlePayoutNotAllowed(PayoutNotAllowedException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("PAYOUT_NOT_ALLOWED", ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

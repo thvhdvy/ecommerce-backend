@@ -9,6 +9,7 @@ import com.thanhnguyen.ecommercebackend.inventory.service.InventoryService;
 import com.thanhnguyen.ecommercebackend.notification.event.NotificationType;
 import com.thanhnguyen.ecommercebackend.notification.event.OrderNotificationEvent;
 import com.thanhnguyen.ecommercebackend.order.dto.CheckoutRequest;
+import com.thanhnguyen.ecommercebackend.order.dto.OrderItemPayoutInfo;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemResponse;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderItemReturnInfo;
 import com.thanhnguyen.ecommercebackend.order.dto.OrderResponse;
@@ -503,6 +504,15 @@ public class OrderServiceImpl implements OrderService {
     @Transactional(readOnly = true)
     public Long getCustomerIdByOrderId(Long orderId) {
         return orderRepository.findById(orderId).map(order -> order.getCustomer().getId()).orElse(null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<OrderItemPayoutInfo> getOrderItemsForPayout(Long orderId) {
+        return orderItemRepository.findAllByOrderId(orderId).stream()
+                .map(item -> new OrderItemPayoutInfo(
+                        item.getSellerId(), item.getUnitPriceSnapshot(), item.getQuantity()))
+                .toList();
     }
 
     /**

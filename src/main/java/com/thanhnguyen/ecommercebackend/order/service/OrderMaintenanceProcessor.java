@@ -8,6 +8,7 @@ import com.thanhnguyen.ecommercebackend.order.entity.OrderStatus;
 import com.thanhnguyen.ecommercebackend.order.entity.OrderStatusHistory;
 import com.thanhnguyen.ecommercebackend.order.repository.OrderRepository;
 import com.thanhnguyen.ecommercebackend.order.repository.OrderStatusHistoryRepository;
+import com.thanhnguyen.ecommercebackend.payout.service.PayoutService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -32,6 +33,7 @@ class OrderMaintenanceProcessor {
     private final OrderStatusHistoryRepository orderStatusHistoryRepository;
     private final InventoryService inventoryService;
     private final CouponService couponService;
+    private final PayoutService payoutService;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     void expireOne(Long orderId, int timeoutMinutes) {
@@ -64,5 +66,9 @@ class OrderMaintenanceProcessor {
         orderStatusHistoryRepository.save(new OrderStatusHistory(
                 order, OrderStatus.DELIVERED, OrderStatus.COMPLETED, null,
                 "Auto-completed after " + autoCompleteDays + " days"));
+        // Ghi nhan EARNED cho tung seller ngay trong transaction nay — goi truc tiep qua service
+        // interface, KHONG qua ApplicationEventPublisher nhu Notification (design doc v2 muc 9.3:
+        // tinh dung cua so sach tai chinh khong duoc phep "thinh thoang bo sot").
+        payoutService.recordEarning(orderId);
     }
 }

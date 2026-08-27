@@ -26,6 +26,9 @@ spring.mail.properties.mail.smtp.starttls.enable=false
 notification.mail.from=no-reply@ecommerce.example
 management.health.mail.enabled=false
 
+# Payout module — hoa hong flat toan he thong
+payout.commission-rate=0.10
+
 # Actuator - /health public (health check cho LB/k8s probe), cac endpoint con lai (metrics, prometheus, info)
 # yeu cau ROLE_ADMIN, xem SecurityConfig.
 management.endpoints.web.exposure.include=health,info,metrics,prometheus

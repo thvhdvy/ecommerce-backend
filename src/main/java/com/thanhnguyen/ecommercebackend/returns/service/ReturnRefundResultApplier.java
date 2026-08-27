@@ -1,5 +1,6 @@
 package com.thanhnguyen.ecommercebackend.returns.service;
 
+import com.thanhnguyen.ecommercebackend.payout.service.PayoutService;
 import com.thanhnguyen.ecommercebackend.returns.entity.ReturnRequest;
 import com.thanhnguyen.ecommercebackend.returns.entity.ReturnRequestStatus;
 import com.thanhnguyen.ecommercebackend.returns.entity.ReturnStatusHistory;
@@ -23,6 +24,7 @@ class ReturnRefundResultApplier {
 
     private final ReturnRequestRepository returnRequestRepository;
     private final ReturnStatusHistoryRepository returnStatusHistoryRepository;
+    private final PayoutService payoutService;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     void applyResult(Long returnRequestId, boolean success) {
@@ -36,6 +38,13 @@ class ReturnRefundResultApplier {
                 new ReturnStatusHistory(r, ReturnRequestStatus.REFUND_PENDING, newStatus, null, null));
         r.setStatus(newStatus);
         returnRequestRepository.save(r);
+
+        // Tru vao seller_balances ngay khi refund thanh cong — cung transaction, goi truc tiep qua
+        // service interface (design doc v2 muc 9.4). Khong lam khi refund that bai (REFUND_FAILED) vi
+        // tien chua thuc su hoan tra khach.
+        if (success) {
+            payoutService.recordAdjustment(r.getId(), r.getSellerId(), r.getRefundAmountSnapshot());
+        }
     }
 
     // Admin retry: dua REFUND_FAILED ve lai REFUND_PENDING truoc khi thu goi VNPay lan nua —
