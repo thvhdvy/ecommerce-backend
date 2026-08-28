@@ -13,6 +13,7 @@ import com.thanhnguyen.ecommercebackend.coupon.entity.CouponRedemption;
 import com.thanhnguyen.ecommercebackend.coupon.entity.CouponRedemptionStatus;
 import com.thanhnguyen.ecommercebackend.coupon.entity.CouponStatus;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponAlreadyUsedException;
+import com.thanhnguyen.ecommercebackend.coupon.exception.CouponConcurrentModificationException;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponInvalidException;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponMinOrderNotMetException;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponNotFoundException;
@@ -23,6 +24,7 @@ import com.thanhnguyen.ecommercebackend.user.entity.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Pageable;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -86,7 +88,19 @@ public class CouponServiceImpl implements CouponService {
             coupon.setEndsAt(request.getEndsAt());
         }
 
-        return toResponse(couponRepository.save(coupon));
+        return toResponse(saveWithOptimisticLock(coupon));
+    }
+
+    // saveAndFlush (khong phai save thuong) de bat ObjectOptimisticLockingFailureException ngay tai
+    // day — phong admin sua coupon (VD ha usage_limit) dung luc co request reserve() dang chay dong
+    // thoi cung doc duoc version cu (design doc v2 muc 6.2, cung ky thuat da dung o
+    // OrderServiceImpl.saveWithOptimisticLock/PayoutServiceImpl.payOut).
+    private Coupon saveWithOptimisticLock(Coupon coupon) {
+        try {
+            return couponRepository.saveAndFlush(coupon);
+        } catch (ObjectOptimisticLockingFailureException ex) {
+            throw new CouponConcurrentModificationException(coupon.getId());
+        }
     }
 
     @Override

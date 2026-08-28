@@ -1,6 +1,7 @@
 package com.thanhnguyen.ecommercebackend.coupon.service;
 
 import com.thanhnguyen.ecommercebackend.coupon.dto.CouponCreateRequest;
+import com.thanhnguyen.ecommercebackend.coupon.dto.CouponUpdateRequest;
 import com.thanhnguyen.ecommercebackend.coupon.dto.CouponValidationResponse;
 import com.thanhnguyen.ecommercebackend.coupon.entity.Coupon;
 import com.thanhnguyen.ecommercebackend.coupon.entity.CouponDiscountType;
@@ -8,6 +9,7 @@ import com.thanhnguyen.ecommercebackend.coupon.entity.CouponRedemption;
 import com.thanhnguyen.ecommercebackend.coupon.entity.CouponRedemptionStatus;
 import com.thanhnguyen.ecommercebackend.coupon.entity.CouponStatus;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponAlreadyUsedException;
+import com.thanhnguyen.ecommercebackend.coupon.exception.CouponConcurrentModificationException;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponInvalidException;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponMinOrderNotMetException;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponNotFoundException;
@@ -21,6 +23,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -285,5 +288,45 @@ class CouponServiceImplTest {
 
         assertThatThrownBy(() -> couponService.create(request)).isInstanceOf(CouponInvalidException.class);
         verify(couponRepository, never()).save(any());
+    }
+
+    // ---------- update() ----------
+
+    @Test
+    void update_shouldApplyOnlyNonNullFields_andSaveWithFlush() {
+        Coupon coupon = fixedCoupon(new BigDecimal("50000"));
+        coupon.setUsageLimit(100);
+        when(couponRepository.findById(2L)).thenReturn(Optional.of(coupon));
+        CouponUpdateRequest request = new CouponUpdateRequest(null, null, null, 50, null, null);
+        when(couponRepository.saveAndFlush(coupon)).thenReturn(coupon);
+
+        couponService.update(2L, request);
+
+        assertThat(coupon.getUsageLimit()).isEqualTo(50);
+        assertThat(coupon.getDiscountValue()).isEqualByComparingTo("50000"); // khong doi vi request null
+        verify(couponRepository).saveAndFlush(coupon);
+    }
+
+    @Test
+    void update_shouldThrowConcurrentModification_whenVersionConflictDetected() {
+        // Design doc v2 muc 6.2: admin ha usage_limit dung luc co request reserve() dang chay dong
+        // thoi cung doc duoc version cu -> saveAndFlush phai phat hien va tu choi, khong ghi de am tham.
+        Coupon coupon = fixedCoupon(new BigDecimal("50000"));
+        when(couponRepository.findById(2L)).thenReturn(Optional.of(coupon));
+        CouponUpdateRequest request = new CouponUpdateRequest(null, null, null, 5, null, null);
+        when(couponRepository.saveAndFlush(coupon))
+                .thenThrow(new ObjectOptimisticLockingFailureException(Coupon.class, 2L));
+
+        assertThatThrownBy(() -> couponService.update(2L, request))
+                .isInstanceOf(CouponConcurrentModificationException.class);
+    }
+
+    @Test
+    void update_shouldThrow_whenCouponNotFound() {
+        when(couponRepository.findById(999L)).thenReturn(Optional.empty());
+        CouponUpdateRequest request = new CouponUpdateRequest(null, null, null, 5, null, null);
+
+        assertThatThrownBy(() -> couponService.update(999L, request)).isInstanceOf(CouponNotFoundException.class);
+        verify(couponRepository, never()).saveAndFlush(any());
     }
 }

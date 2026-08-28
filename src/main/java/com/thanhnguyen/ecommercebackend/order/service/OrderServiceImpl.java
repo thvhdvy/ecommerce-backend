@@ -261,6 +261,14 @@ public class OrderServiceImpl implements OrderService {
                     order, previous, OrderStatus.CANCELLED, actor, "All sellers cancelled"));
             eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_CANCELLED, order.getId()));
         } else {
+            // Ghi lai hanh dong huy cua actor NGAY CA KHI rank aggregate khong doi (VD seller con lai
+            // van dang CONFIRMED) — neu khong, item_status vua doi PENDING/PACKED->CANCELLED se khong
+            // de lai vet o dau ca, vi recomputeAggregateStatus() la no-op khi rank trung (thieu audit
+            // trail, phat hien khi review cheo cac module sau Shipment-split). Tach rieng khoi dong do
+            // recomputeAggregateStatus co the tu ghi (VD rank thuc su doi) — 2 dong khac muc dich, deu
+            // dang duoc giu ca 2.
+            orderStatusHistoryRepository.save(new OrderStatusHistory(
+                    order, order.getStatus(), order.getStatus(), actor, "Seller #" + sellerId + " items cancelled"));
             recomputeAggregateStatus(order);
         }
 
@@ -545,6 +553,12 @@ public class OrderServiceImpl implements OrderService {
                     order, previous, OrderStatus.CANCELLED, null, "All sellers cancelled (delivery retry exhausted)"));
             eventPublisher.publishEvent(new OrderNotificationEvent(NotificationType.ORDER_CANCELLED, order.getId()));
         } else {
+            // Cung ly do voi cancelSellerItems(): ghi lai su kien huy ngay ca khi rank aggregate khong
+            // doi, khong de item_status doi ma khong co vet nao trong history. changed_by = null vi day
+            // la he qua tu dong (delivery retry exhausted), khong phai hanh dong truc tiep cua actor.
+            orderStatusHistoryRepository.save(new OrderStatusHistory(
+                    order, order.getStatus(), order.getStatus(), null,
+                    "Seller #" + sellerId + " delivery retry exhausted"));
             recomputeAggregateStatus(order);
         }
 
@@ -624,7 +638,11 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional(readOnly = true)
     public List<OrderItemPayoutInfo> getOrderItemsForPayout(Long orderId) {
+        // Loai item CANCELLED (huy per-seller, design doc v2 muc 10.5) — seller khong duoc tra hoa hong
+        // cho phan hang chua tung giao ma khach da duoc hoan tien (bug tim thay khi review cheo
+        // Payout x Shipment-split: truoc day tra ve toan bo item, tra du ca phan da huy).
         return orderItemRepository.findAllByOrderId(orderId).stream()
+                .filter(item -> item.getItemStatus() != OrderItemStatus.CANCELLED)
                 .map(item -> new OrderItemPayoutInfo(
                         item.getSellerId(), item.getUnitPriceSnapshot(), item.getQuantity()))
                 .toList();

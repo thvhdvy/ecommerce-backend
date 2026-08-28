@@ -95,7 +95,7 @@ cụ thể", không phải dạng full-aggregate này. Một index đơn cột `
 hình dạng, (b) ở quy mô dữ liệu thật của project này khác biệt không đáng kể — ghi nhận làm điểm cải tiến
 tiếp theo nếu bảng `refunds` lớn dần.
 
-## Tóm tắt
+## Tóm tắt (v1)
 
 | Index | Kết quả |
 |---|---|
@@ -104,3 +104,87 @@ tiếp theo nếu bảng `refunds` lớn dần.
 | `idx_orders_customer_id_created_at` | Đúng hướng nhưng chưa phát huy tác dụng — cần thêm pagination mới thấy ~20x |
 | `idx_order_status_history_to_status_created_at` | Đúng như kỳ vọng cho truy vấn hẹp ngày — ~13x |
 | `idx_refunds_order_id_status` | Chưa đo được khác biệt ở quy mô hiện tại; shape index chưa khớp lý tưởng với query thật |
+
+## v2 module — index cho 4 module mới (Coupon, Return, Notification, Shipment-split)
+
+Cùng phương pháp với v1, DB scratch riêng (không phải Testcontainers), migration `V1`..`V24`. Khác biệt
+về seed: các bảng v2 tham chiếu `Order`/`OrderItem`/`Seller` bằng ID thường (không FK, xem design doc
+mục 0.8) nên **không cần seed lại orders/products** — chỉ cần `users` thật cho các cột có FK
+(`user_id`, `coupon_id`). Quy mô seed: 20,000 `users`, 500 `coupons`, 200,000 `coupon_redemptions`,
+500,000 `notifications` (~200 dòng `PENDING` due), 100,000 `return_requests` (~200 dòng `APPROVED`
+quá hạn), 300,000 `deliveries`.
+
+### 1. Notification dispatcher poll (`idx_notifications_status_next_retry_at`, V22)
+
+Query thật của `NotificationDispatcher` (chạy định kỳ, mọi request scheduler):
+`WHERE status = 'PENDING' AND next_retry_at <= now() ORDER BY id LIMIT 100`.
+
+| | Plan | Execution Time |
+|---|---|---|
+| **Trước** (không có index) | `Parallel Index Scan` trên PK, filter toàn bộ 500K dòng | 78.96 ms |
+| **Sau** (composite `(status, next_retry_at)`) | `Index Scan` trực tiếp, chỉ đọc đúng ~200 dòng khớp | 0.16 ms |
+
+**~500x**. Đây là bảng phát triển không giới hạn theo thời gian (mỗi order transition tạo 1 dòng) —
+index này càng quan trọng khi bảng lớn dần, vì tập `PENDING` cần quét luôn nhỏ và cố định trong khi
+toàn bảng tăng vô hạn.
+
+### 2. Return auto-expire poll (`idx_return_requests_status_expires_at`, V21) — phát hiện: index thừa về mặt đo lường
+
+Query thật của `ReturnMaintenanceScheduler`: `WHERE status = 'APPROVED' AND expires_at < now() ORDER BY id LIMIT 100`.
+
+| | Plan | Execution Time |
+|---|---|---|
+| **Trước** (đã `DROP` `idx_return_requests_status_expires_at`) | `Index Scan` trên `uq_return_requests_active` (partial unique index của mục 6.4/7.6, filter thêm `expires_at`) | 0.077 ms |
+| **Sau** (có `idx_return_requests_status_expires_at`) | `Index Scan` trên chính index này | 0.084 ms |
+
+**Không khác biệt đo được** — và lý do khác hẳn case `refunds` ở v1 (không phải "bảng còn nhỏ"). Chính
+`uq_return_requests_active` (partial unique index chặn race condition, mục 6.4) tình cờ **đã là 1
+covering index rất hẹp** cho đúng truy vấn này: nó chỉ chứa các dòng `status IN (REQUESTED, APPROVED,
+ITEM_RECEIVED, REFUND_PENDING, REFUND_FAILED)` — tức đúng tập "chưa terminal", theo thiết kế luôn nhỏ
+và bị chặn không phình to (mỗi return request giải quyết xong sẽ rời khỏi tập này). Planner tận dụng
+được index đó thay vì cần quét toàn bảng dù nó không được tạo ra cho mục đích này.
+
+### 3. Coupon redemption lookup theo order (`idx_coupon_redemptions_order_id`, V20)
+
+Query thật của `CouponServiceImpl.commit()`/`release()` (chạy mỗi lần payment confirm/cancel order có
+dùng coupon): `WHERE order_id = ?`.
+
+| | Plan | Execution Time |
+|---|---|---|
+| **Trước** (không có index) | `Seq Scan`, quét 200K dòng | 19.82 ms |
+| **Sau** | `Index Scan` | 0.038 ms |
+
+**~520x**. Đáng chú ý vì đây nằm trên hot path checkout/cancel, không phải job nền — độ trễ này cộng
+trực tiếp vào response time của khách khi order có coupon.
+
+### 4. Deliveries lookup theo order (`idx_deliveries_order_id`, V24) — phát hiện: index dư thừa, nên bỏ
+
+Query thật của `ShippingServiceImpl.getDeliveryStatusesBySeller()`, gọi bởi
+`OrderServiceImpl.recomputeAggregateStatus()` — **chạy mỗi lần bất kỳ delivery nào đổi trạng thái**
+(assign, in-transit, delivered, failed) trong toàn bộ order, không riêng gì delivery vừa đổi:
+`WHERE order_id = ?`.
+
+| | Plan | Execution Time |
+|---|---|---|
+| **Trước** (đã `DROP` `idx_deliveries_order_id`) | `Index Scan` trên `uq_deliveries_order_seller` (constraint `UNIQUE(order_id, seller_id)`, V24) | 0.032 ms |
+| **Sau** (có `idx_deliveries_order_id`) | `Index Scan` trên chính index mới | 0.040 ms |
+
+**Không khác biệt — và lần này là index thật sự thừa**, không phải "chưa phát huy tác dụng ở quy mô
+hiện tại" như case `refunds`/Return ở trên. `order_id` là cột dẫn đầu (leading column) của unique
+constraint `(order_id, seller_id)` đã có sẵn từ chính migration `V24` — Postgres dùng được index đó cho
+điều kiện chỉ lọc theo `order_id` (prefix match trên composite index), nên `idx_deliveries_order_id`
+không bao giờ được planner chọn ưu tiên hơn, chỉ tốn thêm dung lượng + chi phí ghi mỗi lần
+insert/update `deliveries` mà không mang lại lợi ích đọc nào. Đây là bug tương tự tinh thần case
+`idx_products_name_trgm` ở v1 (mục 2: "index tưởng có tác dụng nhưng đo thật mới lộ ra") — khác ở chỗ
+lần này không sai biểu thức, mà thừa hoàn toàn vì trùng với 1 index khác đã tồn tại.
+
+**Đã fix**: [`V25__drop_redundant_deliveries_order_id_index.sql`](../src/main/resources/db/migration/V25__drop_redundant_deliveries_order_id_index.sql) — `DROP INDEX`, không sửa lại `V24` đã chạy production (đúng nguyên tắc Flyway: migration đã áp dụng không được sửa, chỉ thêm migration mới).
+
+## Tóm tắt (v2)
+
+| Index | Kết quả |
+|---|---|
+| `idx_notifications_status_next_retry_at` | Đúng như kỳ vọng — ~500x, quan trọng dần khi bảng lớn |
+| `idx_return_requests_status_expires_at` | Không đo được khác biệt — `uq_return_requests_active` (index khác, tạo cho mục đích concurrency) tình cờ đã covering đúng truy vấn này |
+| `idx_coupon_redemptions_order_id` | Đúng như kỳ vọng — ~520x, nằm trên hot path checkout/cancel |
+| `idx_deliveries_order_id` | **Thừa** — trùng leading column với `uq_deliveries_order_seller` đã có sẵn → đã `DROP` ở `V25` |

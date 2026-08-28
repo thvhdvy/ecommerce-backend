@@ -3,6 +3,7 @@ package com.thanhnguyen.ecommercebackend.common;
 import com.thanhnguyen.ecommercebackend.cart.exception.CartItemNotFoundException;
 import com.thanhnguyen.ecommercebackend.cart.exception.CartOwnershipException;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponAlreadyUsedException;
+import com.thanhnguyen.ecommercebackend.coupon.exception.CouponConcurrentModificationException;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponInvalidException;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponMinOrderNotMetException;
 import com.thanhnguyen.ecommercebackend.coupon.exception.CouponNotFoundException;
@@ -352,6 +353,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleCouponAlreadyUsed(CouponAlreadyUsedException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("COUPON_ALREADY_USED", ex.getMessage()));
+    }
+
+    @ExceptionHandler(CouponConcurrentModificationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleCouponConcurrentModification(CouponConcurrentModificationException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("COUPON_CONCURRENT_MODIFICATION", ex.getMessage()));
     }
 
     @ExceptionHandler(NotificationNotFoundException.class)
