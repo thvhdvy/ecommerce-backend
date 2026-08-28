@@ -10,6 +10,24 @@ jwt.secret=CHANGE_ME_BASE64_SECRET
 jwt.access-token-expiration-ms=900000
 jwt.refresh-token-expiration-ms=604800000
 
+# Rong theo mac dinh = khong origin nao duoc phep goi API (xem SecurityConfig). Dien origin FE that
+# khi co frontend, vd http://localhost:5173 cho Vite — KHONG dung "*" vi allowCredentials(true).
+# Placeholder ${CORS_ALLOWED_ORIGINS:} (giong pattern MAIL_HOST/MAIL_PORT o duoi) de docker-compose.yml
+# override duoc bang bien CORS_ALLOWED_ORIGINS — property key co dau "-" nen KHONG dung duoc co che tu
+# map bien moi truong -> property cua Spring (yeu cau APP_CORS_ALLOWED_ORIGINS, dai va de nham hon).
+app.cors.allowed-origins=${CORS_ALLOWED_ORIGINS:}
+
+# Cloudinary — luu tru anh san pham (POST /api/seller/products/images), dang ky free tier tai
+# https://cloudinary.com/users/register/free de lay 3 gia tri nay tu Dashboard.
+cloudinary.cloud-name=CHANGE_ME
+cloudinary.api-key=CHANGE_ME
+cloudinary.api-secret=CHANGE_ME
+
+# Gioi han kich thuoc file anh upload — dat tuong minh thay vi phu thuoc mac dinh an cua Spring (1MB/10MB).
+spring.servlet.multipart.max-file-size=5MB
+spring.servlet.multipart.max-request-size=5MB
+
+
 # VNPay sandbox — dang ky merchant test tai https://sandbox.vnpayment.vn/devreg de lay tmn-code/hash-secret that
 vnpay.tmn-code=CHANGE_ME
 vnpay.hash-secret=CHANGE_ME

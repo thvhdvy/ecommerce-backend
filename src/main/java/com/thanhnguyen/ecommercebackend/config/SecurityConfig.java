@@ -27,9 +27,9 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
 
-    // Rong theo mac dinh (chua co frontend that) -> khong origin nao duoc phep, giu nguyen hanh vi
-    // dong-by-default hien tai. Khi co frontend, set app.cors.allowed-origins (vd https://shop.example.com)
-    // qua bien moi truong/application.properties — TUYET DOI khong dung "*" khi co Authorization header.
+    // Rong theo mac dinh -> khong origin nao duoc phep (dong-by-default). Dev local set truc tiep trong
+    // application.properties (vd http://localhost:5173 cho Vite); production set qua bien moi truong
+    // CORS_ALLOWED_ORIGINS (xem docker-compose.yml) — TUYET DOI khong dung "*" khi co Authorization header.
     @Value("${app.cors.allowed-origins:}")
     private String allowedOriginsRaw;
 

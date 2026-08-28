@@ -23,6 +23,7 @@ import com.thanhnguyen.ecommercebackend.payment.exception.RefundNotFoundExceptio
 import com.thanhnguyen.ecommercebackend.product.exception.BrandNotFoundException;
 import com.thanhnguyen.ecommercebackend.product.exception.CategoryNotFoundException;
 import com.thanhnguyen.ecommercebackend.common.InvalidSortFieldException;
+import com.thanhnguyen.ecommercebackend.product.exception.InvalidImageFileException;
 import com.thanhnguyen.ecommercebackend.product.exception.MultiplePrimaryImagesException;
 import com.thanhnguyen.ecommercebackend.user.exception.NotASellerException;
 import com.thanhnguyen.ecommercebackend.product.exception.ProductNotFoundException;
@@ -243,6 +244,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleMultiplePrimaryImages(MultiplePrimaryImagesException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error("MULTIPLE_PRIMARY_IMAGES", ex.getMessage()));
+    }
+
+    @ExceptionHandler(InvalidImageFileException.class)
+    public ResponseEntity<ApiResponse<Void>> handleInvalidImageFile(InvalidImageFileException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("INVALID_IMAGE_FILE", ex.getMessage()));
     }
 
     @ExceptionHandler(InvalidSortFieldException.class)
